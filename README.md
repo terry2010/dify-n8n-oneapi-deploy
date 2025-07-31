@@ -32,7 +32,7 @@ sh install.sh
 
 # 运行效果：
 
-<img width="1295" height="917" alt="image" src="https://github.com/user-attachments/assets/02309771-22e8-4384-b303-6f210eb95b7b" />
+<img width="1309" height="975" alt="image" src="https://github.com/user-attachments/assets/bf654954-4709-45a0-b322-879431b00b91" />
 
 
 <img width="946" height="2244" alt="image" src="https://github.com/user-attachments/assets/0627a150-2f68-4969-8bdb-70643040b6c5" />
