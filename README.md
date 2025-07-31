@@ -25,4 +25,4 @@
 
 # 运行效果：
 
-<img width="1471" height="1453" alt="图片" src="https://github.com/user-attachments/assets/d91cfbbd-644c-4876-a139-1464df93bac1" />
+<img width="1187" height="2045" alt="image" src="https://github.com/user-attachments/assets/549e4a36-679f-4cfe-82c1-a8e2a97b5095" />
