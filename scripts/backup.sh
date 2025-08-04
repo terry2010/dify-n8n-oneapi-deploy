@@ -139,7 +139,7 @@ backup_postgres() {
     local db_password="${DB_PASSWORD}"
 
     # 备份所有数据库
-    docker exec -e PG*="$db_password" "$container_name" pg_dumpall -U postgres > "${backup_dir}/postgres_all_databases.sql" 2>/dev/null
+    docker exec -e PGPASSWORD="$db_password" "$container_name" pg_dumpall -U postgres > "${backup_dir}/postgres_all_databases.sql" 2>/dev/null
 
     if [ $? -eq 0 ] && [ -s "${backup_dir}/postgres_all_databases.sql" ]; then
         success "PostgreSQL数据库备份完成: ${backup_dir}/postgres_all_databases.sql"
@@ -147,7 +147,7 @@ backup_postgres() {
         echo "备份类型: PostgreSQL数据库" >> "${backup_dir}/backup_info.txt"
         echo "备份大小: $(du -sh "${backup_dir}/postgres_all_databases.sql" | cut -f1)" >> "${backup_dir}/backup_info.txt"
         echo "数据库列表:" >> "${backup_dir}/backup_info.txt"
-        docker exec -e PG*="$db_password" "$container_name" psql -U postgres -c "\l" 2>/dev/null | grep -v "List of databases\|template\|postgres" | awk '{print $1}' | grep -v "^$\|^-\|Name" >> "${backup_dir}/backup_info.txt" 2>/dev/null
+        docker exec -e PGPASSWORD="$db_password" "$container_name" psql -U postgres -c "\l" 2>/dev/null | grep -v "List of databases\|template\|postgres" | awk '{print $1}' | grep -v "^$\|^-\|Name" >> "${backup_dir}/backup_info.txt" 2>/dev/null
         return 0
     else
         error "PostgreSQL数据库备份失败"
@@ -584,7 +584,7 @@ backup_postgres_to_dir() {
     local db_password="${DB_PASSWORD}"
 
     if docker ps --format "{{.Names}}" | grep -q "^${container_name}$"; then
-        docker exec -e PG*="$db_password" "$container_name" pg_dumpall -U postgres > "${target_dir}/postgres_all_databases.sql" 2>/dev/null
+        docker exec -e PGPASSWORD="$db_password" "$container_name" pg_dumpall -U postgres > "${target_dir}/postgres_all_databases.sql" 2>/dev/null
         return $?
     else
         return 1

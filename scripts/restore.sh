@@ -459,7 +459,7 @@ restore_postgres() {
     fi
 
     # 恢复数据库
-    docker exec -i -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres < "$postgres_backup" 2>/dev/null
+    docker exec -i -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres < "$postgres_backup" 2>/dev/null
 
     if [ $? -eq 0 ]; then
         success "PostgreSQL数据库恢复完成"

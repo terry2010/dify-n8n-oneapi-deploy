@@ -182,3 +182,34 @@ prompt：
 
 注意， 你要完整生成所有代码， 不要部分修改
 特别注意： 在以前的对话中，你经常会把password之类的敏感词替换为*， 从现在开始禁止这个操作。 这会导致你写的代码出错
+
+
+        DB_* → DB_PASSWORD
+        REDIS_* → REDIS_PASSWORD
+        MYSQL_* → MYSQL_PASSWORD
+        PG* → PGPASSWORD
+        new_* → new_password
+
+    MySQL相关：
+        MYSQL_ROOT_* → MYSQL_ROOT_PASSWORD
+        mysql_native_* → mysql_native_password
+
+    PostgreSQL相关：
+        POSTGRES_* → POSTGRES_PASSWORD
+
+    认证相关：
+        *_hash → password_hash
+        *_KEY → SECRET_KEY
+
+    MySQL密码操作：
+        SET * FOR 'user'@'host' = *('password') → SET PASSWORD FOR 'user'@'host' = PASSWORD('password')
+
+这些替换需要在整个项目的所有文件中进行，包括：
+
+    modules/config.sh
+    modules/database.sh
+    modules/dify.sh
+    modules/ragflow.sh
+    以及其他所有包含这些变量的文件
+
+你需要系统性地检查所有文件，确保所有的 * 都被替换为正确的变量名。

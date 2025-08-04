@@ -48,13 +48,13 @@ services:
       - ./volumes/mysql/data:/var/lib/mysql
       - ./volumes/mysql/logs:/var/log/mysql
       - ./volumes/mysql/conf:/etc/mysql/conf.d
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password --sql_mode=STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password --sql_mode=STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO --max_connections=200 --innodb_buffer_pool_size=256M
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD}"]
       timeout: 20s
-      retries: 10
+      retries: 15
       interval: 10s
-      start_period: 60s
+      start_period: 120s
     networks:
       - aiserver_network
 
@@ -87,13 +87,13 @@ services:
                -c 'logging_collector=on'
                -c 'log_directory=/var/log/postgresql'
                -c 'log_filename=postgresql-%Y-%m-%d_%H%M%S.log'
-               -c 'log_statement=error'
+               -c 'log_statement=none'
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 10
+      start_period: 60s
     networks:
       - aiserver_network
 
@@ -148,9 +148,14 @@ start_database_services() {
     # 启动数据库服务
     docker-compose -f docker-compose-db.yml up -d
 
-    # 等待数据库服务启动
-    wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 90
-    wait_for_service "postgres" "pg_isready -U postgres" 90
+    # 等待数据库服务启动（增加超时时间）
+    log "等待MySQL服务启动（可能需要较长时间进行初始化）..."
+    wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 300
+
+    log "等待PostgreSQL服务启动..."
+    wait_for_service "postgres" "pg_isready -U postgres" 120
+
+    log "等待Redis服务启动..."
     wait_for_service "redis" "redis-cli ping" 60
 
     success "数据库服务启动完成"
@@ -255,9 +260,9 @@ setup_database_permissions() {
     log "设置PostgreSQL权限..."
 
     # 为应用创建专用用户
-    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "DO \$\$ BEGIN CREATE USER dify_user WITH *='${DB_PASSWORD}'; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'User already exists'; END \$\$;" 2>/dev/null
-    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "DO \$\$ BEGIN CREATE USER n8n_user WITH *='${DB_PASSWORD}'; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'User already exists'; END \$\$;" 2>/dev/null
-    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "DO \$\$ BEGIN CREATE USER oneapi_user WITH *='${DB_PASSWORD}'; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'User already exists'; END \$\$;" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "DO \$\$ BEGIN CREATE USER dify_user WITH password='${DB_PASSWORD}'; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'User already exists'; END \$\$;" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "DO \$\$ BEGIN CREATE USER n8n_user WITH password='${DB_PASSWORD}'; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'User already exists'; END \$\$;" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "DO \$\$ BEGIN CREATE USER oneapi_user WITH password='${DB_PASSWORD}'; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'User already exists'; END \$\$;" 2>/dev/null
 
     # 授权
     docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE dify TO dify_user;" 2>/dev/null
@@ -508,16 +513,16 @@ backup_databases() {
         log "备份PostgreSQL数据库..."
 
         # 备份所有数据库
-        docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" pg_dumpall -U postgres > "${backup_dir}/postgres_all_databases.sql" 2>/dev/null
+        docker exec -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" pg_dumpall -U postgres > "${backup_dir}/postgres_all_databases.sql" 2>/dev/null
 
         # 单独备份重要数据库
         for db in dify n8n oneapi; do
-            docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" pg_dump -U postgres "$db" > "${backup_dir}/postgres_${db}.sql" 2>/dev/null
+            docker exec -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" pg_dump -U postgres "$db" > "${backup_dir}/postgres_${db}.sql" 2>/dev/null
         done
 
         # 备份系统信息
-        docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "SELECT version();" > "${backup_dir}/postgres_version.txt" 2>/dev/null
-        docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "\\l" > "${backup_dir}/postgres_databases.txt" 2>/dev/null
+        docker exec -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "SELECT version();" > "${backup_dir}/postgres_version.txt" 2>/dev/null
+        docker exec -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "\\l" > "${backup_dir}/postgres_databases.txt" 2>/dev/null
 
         if [ -s "${backup_dir}/postgres_all_databases.sql" ]; then
             success "PostgreSQL数据库备份完成"
@@ -636,7 +641,7 @@ restore_databases() {
     # 恢复PostgreSQL
     if [ -f "${backup_dir}/postgres_all_databases.sql" ]; then
         log "恢复PostgreSQL数据库..."
-        docker exec -i -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres < "${backup_dir}/postgres_all_databases.sql" 2>/dev/null
+        docker exec -i -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres < "${backup_dir}/postgres_all_databases.sql" 2>/dev/null
         if [ $? -eq 0 ]; then
             success "PostgreSQL数据库恢复完成"
         else
@@ -761,10 +766,10 @@ check_database_health() {
             echo "✅ 正常"
 
             # 显示详细信息
-            local pg_version=$(docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -t -c "SELECT version();" 2>/dev/null | head -1 | xargs)
+            local pg_version=$(docker exec -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -t -c "SELECT version();" 2>/dev/null | head -1 | xargs)
             echo "  版本: ${pg_version:0:50}..."
 
-            local pg_connections=$(docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -t -c "SELECT count(*) FROM pg_stat_activity;" 2>/dev/null | xargs)
+            local pg_connections=$(docker exec -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -t -c "SELECT count(*) FROM pg_stat_activity;" 2>/dev/null | xargs)
             echo "  当前连接数: $pg_connections"
         else
             echo "❌ 连接失败"
@@ -820,11 +825,11 @@ show_database_stats() {
     # PostgreSQL统计
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres"; then
         echo "PostgreSQL数据库:"
-        docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "
-            SELECT
+        docker exec -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "
+            SELECT 
                 datname as \"Database\",
                 pg_size_pretty(pg_database_size(datname)) as \"Size\"
-            FROM pg_database
+            FROM pg_database 
             WHERE datname NOT IN ('template0', 'template1', 'postgres')
             ORDER BY pg_database_size(datname) DESC;
         " 2>/dev/null
@@ -872,49 +877,49 @@ maintain_databases() {
     # MySQL维护
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_mysql"; then
         log "执行MySQL维护..."
-
+        
         # 分析表
         docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "
             ANALYZE TABLE ragflow.users, ragflow.datasets, ragflow.documents;
         " 2>/dev/null || true
-
+        
         # 优化表
         docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "
             OPTIMIZE TABLE ragflow.conversations, ragflow.messages;
         " 2>/dev/null || true
-
+        
         success "MySQL维护完成"
     fi
 
     # PostgreSQL维护
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres"; then
         log "执行PostgreSQL维护..."
-
+        
         # 更新统计信息
         for db in dify n8n oneapi; do
-            docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -d "$db" -c "ANALYZE;" 2>/dev/null || true
+            docker exec -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -d "$db" -c "ANALYZE;" 2>/dev/null || true
         done
-
+        
         # 清理死元组
         for db in dify n8n oneapi; do
-            docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -d "$db" -c "VACUUM;" 2>/dev/null || true
+            docker exec -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -d "$db" -c "VACUUM;" 2>/dev/null || true
         done
-
+        
         success "PostgreSQL维护完成"
     fi
 
     # Redis维护
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_redis"; then
         log "执行Redis维护..."
-
+        
         # 后台保存
         docker exec "${CONTAINER_PREFIX}_redis" redis-cli BGSAVE >/dev/null 2>&1
-
+        
         # 清理过期键
         docker exec "${CONTAINER_PREFIX}_redis" redis-cli --scan --pattern "*" | head -1000 | while read key; do
             docker exec "${CONTAINER_PREFIX}_redis" redis-cli TTL "$key" >/dev/null 2>&1
         done
-
+        
         success "Redis维护完成"
     fi
 
@@ -925,74 +930,74 @@ maintain_databases() {
 }
 
 # 重置数据库密码
-reset_database_password() {
+reset_database_passwore() {
     local new_password="$1"
-
+    
     if [ -z "$new_password" ]; then
         error "请提供新密码"
         return 1
     fi
-
+    
     log "重置数据库密码..."
-
+    
     # 确认操作
     echo -e "\n${YELLOW}警告: 重置数据库密码将影响所有应用连接！${NC}"
     read -p "确定要继续吗？(输入 'yes' 确认): " confirm
-
+    
     if [ "$confirm" != "yes" ]; then
         log "密码重置已取消"
         return 0
     fi
-
+    
     # 停止应用服务
     log "停止应用服务..."
     docker-compose -f docker-compose-dify.yml stop 2>/dev/null || true
     docker-compose -f docker-compose-n8n.yml stop 2>/dev/null || true
     docker-compose -f docker-compose-oneapi.yml stop 2>/dev/null || true
     docker-compose -f docker-compose-ragflow.yml stop 2>/dev/null || true
-
+    
     # 重置MySQL密码
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_mysql"; then
         log "重置MySQL密码..."
         docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "
-            SET PASSWORD FOR 'root'@'%' = PASSWORD('$new_password');
-            SET PASSWORD FOR 'root'@'localhost' = PASSWORD('$new_password');
-            UPDATE mysql.user SET * = PASSWORD('$new_password') WHERE User = 'ragflow';
-            UPDATE mysql.user SET * = PASSWORD('$new_password') WHERE User = 'dify';
-            UPDATE mysql.user SET * = PASSWORD('$new_password') WHERE User = 'oneapi';
+            SET password FOR 'root'@'%' = password('$new_password');
+            SET password FOR 'root'@'localhost' = password('$new_password');
+            UPDATE mysql.user SET password = password('$new_password') WHERE User = 'ragflow';
+            UPDATE mysql.user SET password = password('$new_password') WHERE User = 'dify';
+            UPDATE mysql.user SET password = password('$new_password') WHERE User = 'oneapi';
             FLUSH PRIVILEGES;
         " 2>/dev/null
         success "MySQL密码重置完成"
     fi
-
+    
     # 重置PostgreSQL密码
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres"; then
         log "重置PostgreSQL密码..."
         docker exec "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "
-            ALTER USER postgres * '$new_password';
-            ALTER USER dify_user * '$new_password';
-            ALTER USER n8n_user * '$new_password';
-            ALTER USER oneapi_user * '$new_password';
+            ALTER USER postgres PASSWORD  '$new_password';
+            ALTER USER dify_user PASSWORD  '$new_password';
+            ALTER USER n8n_user PASSWORD  '$new_password';
+            ALTER USER oneapi_user PASSWORD  '$new_password';
         " 2>/dev/null
         success "PostgreSQL密码重置完成"
     fi
-
+    
     # 更新配置文件
     log "更新配置文件..."
     sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=\"$new_password\"/" "modules/config.sh"
-
+    
     # 重新生成应用配置
     source modules/config.sh
     init_config
-
+    
     # 重新生成Docker Compose文件
     generate_database_compose
-
+    
     # 重启数据库服务
     log "重启数据库服务..."
     docker-compose -f docker-compose-db.yml restart
     sleep 30
-
+    
     success "数据库密码重置完成"
     warning "请重新启动所有应用服务以使新密码生效"
 }
@@ -1000,13 +1005,13 @@ reset_database_password() {
 # 导出数据库配置
 export_database_config() {
     local config_file="$1"
-
+    
     if [ -z "$config_file" ]; then
         config_file="$INSTALL_PATH/backup/database_config_$(date +%Y%m%d_%H%M%S).txt"
     fi
-
+    
     mkdir -p "$(dirname "$config_file")"
-
+    
     cat > "$config_file" << CONFIG_EOF
 # 数据库配置导出
 # 导出时间: $(date)
@@ -1038,6 +1043,204 @@ MYSQL_CONNECTION_STRING="mysql://root:${DB_PASSWORD}@${SERVER_IP}:${MYSQL_PORT}"
 POSTGRES_CONNECTION_STRING="postgresql://postgres:${DB_PASSWORD}@${SERVER_IP}:${POSTGRES_PORT}"
 REDIS_CONNECTION_STRING="redis://${SERVER_IP}:${REDIS_PORT}"
 CONFIG_EOF
-
+    
     success "数据库配置已导出: $config_file"
+}
+
+# 数据库连接测试
+test_database_connections() {
+    log "测试数据库连接..."
+    local all_connected=true
+    
+    # 测试MySQL连接
+    if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_mysql"; then
+        if docker exec "${CONTAINER_PREFIX}_mysql" mysqladmin ping -u root -p"${DB_PASSWORD}" --silent 2>/dev/null; then
+            success "MySQL连接测试通过"
+        else
+            error "MySQL连接测试失败"
+            all_connected=false
+        fi
+    else
+        warning "MySQL服务未运行"
+        all_connected=false
+    fi
+    
+    # 测试PostgreSQL连接
+    if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres"; then
+        if docker exec "${CONTAINER_PREFIX}_postgres" pg_isready -U postgres >/dev/null 2>&1; then
+            success "PostgreSQL连接测试通过"
+        else
+            error "PostgreSQL连接测试失败"
+            all_connected=false
+        fi
+    else
+        warning "PostgreSQL服务未运行"
+        all_connected=false
+    fi
+    
+    # 测试Redis连接
+    if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_redis"; then
+        if docker exec "${CONTAINER_PREFIX}_redis" redis-cli ping >/dev/null 2>&1; then
+            success "Redis连接测试通过"
+        else
+            error "Redis连接测试失败"
+            all_connected=false
+        fi
+    else
+        warning "Redis服务未运行"
+        all_connected=false
+    fi
+    
+    if [ "$all_connected" = true ]; then
+        success "所有数据库连接测试通过"
+        return 0
+    else
+        error "数据库连接测试存在问题"
+        return 1
+    fi
+}
+
+# 获取数据库服务状态
+get_database_status() {
+    echo -e "${BLUE}=== 数据库服务状态 ===${NC}"
+    
+    local services=("mysql" "postgres" "redis")
+    for service in "${services[@]}"; do
+        local container_name="${CONTAINER_PREFIX}_${service}"
+        
+        if docker ps --format "{{.Names}}" | grep -q "^${container_name}$"; then
+            local health_status=$(docker inspect --format='{{.State.Health.Status}}' "$container_name" 2>/dev/null || echo "no-health-check")
+            local uptime=$(docker inspect --format='{{.State.StartedAt}}' "$container_name" 2>/dev/null | cut -d'T' -f1)
+            
+            case "$health_status" in
+                healthy)
+                    echo "✅ $service: 健康 (启动时间: $uptime)"
+                    ;;
+                unhealthy)
+                    echo "❌ $service: 不健康 (启动时间: $uptime)"
+                    ;;
+                starting)
+                    echo "🔄 $service: 启动中 (启动时间: $uptime)"
+                    ;;
+                *)
+                    echo "ℹ️  $service: 运行中 (启动时间: $uptime)"
+                    ;;
+            esac
+        else
+            echo "❌ $service: 未运行"
+        fi
+    done
+    
+    echo ""
+}
+
+# 数据库性能监控
+monitor_database_performance() {
+    log "数据库性能监控..."
+    
+    echo -e "${BLUE}=== 数据库性能统计 ===${NC}"
+    
+    # MySQL性能统计
+    if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_mysql"; then
+        echo "MySQL性能指标:"
+        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "
+            SELECT 
+                'Queries per second' as Metric,
+                ROUND(Variable_value / (SELECT Variable_value FROM information_schema.GLOBAL_STATUS WHERE Variable_name = 'Uptime'), 2) as Value
+            FROM information_schema.GLOBAL_STATUS 
+            WHERE Variable_name = 'Questions'
+            UNION ALL
+            SELECT 'Connections', Variable_value FROM information_schema.GLOBAL_STATUS WHERE Variable_name = 'Threads_connected'
+            UNION ALL 
+            SELECT 'Slow queries', Variable_value FROM information_schema.GLOBAL_STATUS WHERE Variable_name = 'Slow_queries';
+        " 2>/dev/null | column -t
+        echo ""
+    fi
+    
+    # PostgreSQL性能统计
+    if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres"; then
+        echo "PostgreSQL性能指标:"
+        docker exec -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "
+            SELECT 
+                'Active connections' as metric,
+                count(*) as value
+            FROM pg_stat_activity
+            WHERE state = 'active'
+            UNION ALL
+            SELECT 'Total connections', count(*) FROM pg_stat_activity;
+        " 2>/dev/null
+        echo ""
+    fi
+    
+    # Redis性能统计
+    if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_redis"; then
+        echo "Redis性能指标:"
+        local redis_info=$(docker exec "${CONTAINER_PREFIX}_redis" redis-cli info stats 2>/dev/null)
+        echo "  操作/秒: $(echo "$redis_info" | grep instantaneous_ops_per_sec | cut -d: -f2 | tr -d '\r')"
+        echo "  已用内存: $(docker exec "${CONTAINER_PREFIX}_redis" redis-cli info memory | grep used_memory_human | cut -d: -f2 | tr -d '\r')"
+        echo "  命中率: $(echo "$redis_info" | grep keyspace_hits | cut -d: -f2 | tr -d '\r')%"
+        echo ""
+    fi
+}
+
+# 数据库服务重启
+restart_database_service() {
+    local service="$1"
+    
+    if [ -z "$service" ]; then
+        error "请指定要重启的服务名称: mysql, postgres, redis, all"
+        return 1
+    fi
+    
+    case "$service" in
+        mysql)
+            log "重启MySQL服务..."
+            docker-compose -f docker-compose-db.yml restart mysql
+            wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 120
+            ;;
+        postgres)
+            log "重启PostgreSQL服务..."
+            docker-compose -f docker-compose-db.yml restart postgres
+            wait_for_service "postgres" "pg_isready -U postgres" 60
+            ;;
+        redis)
+            log "重启Redis服务..."
+            docker-compose -f docker-compose-db.yml restart redis
+            wait_for_service "redis" "redis-cli ping" 30
+            ;;
+        all)
+            log "重启所有数据库服务..."
+            docker-compose -f docker-compose-db.yml restart
+            sleep 30
+            wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 120
+            wait_for_service "postgres" "pg_isready -U postgres" 60
+            wait_for_service "redis" "redis-cli ping" 30
+            ;;
+        *)
+            error "未知的服务名称: $service"
+            return 1
+            ;;
+    esac
+    
+    success "数据库服务重启完成"
+}
+
+# 检查数据库磁盘使用情况
+check_database_disk_usage() {
+    echo -e "${BLUE}=== 数据库磁盘使用情况 ===${NC}"
+    
+    # 检查各数据库数据目录大小
+    echo "数据目录大小:"
+    [ -d "$INSTALL_PATH/volumes/mysql/data" ] && echo "  MySQL: $(du -sh "$INSTALL_PATH/volumes/mysql/data" | cut -f1)"
+    [ -d "$INSTALL_PATH/volumes/postgres/data" ] && echo "  PostgreSQL: $(du -sh "$INSTALL_PATH/volumes/postgres/data" | cut -f1)"
+    [ -d "$INSTALL_PATH/volumes/redis/data" ] && echo "  Redis: $(du -sh "$INSTALL_PATH/volumes/redis/data" | cut -f1)"
+    
+    echo ""
+    echo "日志目录大小:"
+    [ -d "$INSTALL_PATH/volumes/mysql/logs" ] && echo "  MySQL日志: $(du -sh "$INSTALL_PATH/volumes/mysql/logs" | cut -f1)"
+    [ -d "$INSTALL_PATH/volumes/postgres/logs" ] && echo "  PostgreSQL日志: $(du -sh "$INSTALL_PATH/volumes/postgres/logs" | cut -f1)"
+    [ -d "$INSTALL_PATH/volumes/redis/logs" ] && echo "  Redis日志: $(du -sh "$INSTALL_PATH/volumes/redis/logs" | cut -f1)"
+    
+    echo ""
+    echo "总计: $(du -sh "$INSTALL_PATH/volumes" | cut -f1)"
 }
