@@ -37,7 +37,7 @@ services:
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_DATABASE: n8n
-      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_HOST: ${CONTAINER_PREFIX}_postgres
       DB_POSTGRESDB_PORT: "5432"
       DB_POSTGRESDB_USER: postgres
       DB_POSTGRESDB_SCHEMA: public

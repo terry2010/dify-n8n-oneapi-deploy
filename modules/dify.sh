@@ -62,18 +62,18 @@ services:
       SECRET_KEY: dify-secret-key-random123456
       DB_USERNAME: postgres
       DB_PASSWORD: "${DB_PASSWORD}"
-      DB_HOST: postgres
+      DB_HOST: ${CONTAINER_PREFIX}_postgres
       DB_PORT: "5432"
       DB_DATABASE: dify
-      REDIS_HOST: redis
+      REDIS_HOST: ${CONTAINER_PREFIX}_redis
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
-      CELERY_BROKER_URL: "redis://redis:6379/1"
+      CELERY_BROKER_URL: "redis://${CONTAINER_PREFIX}_redis:6379/1"
       WEB_API_CORS_ALLOW_ORIGINS: "*"
       CONSOLE_CORS_ALLOW_ORIGINS: "*"
       STORAGE_TYPE: local
-      CODE_EXECUTION_ENDPOINT: "http://dify_sandbox:8194"
+      CODE_EXECUTION_ENDPOINT: "http://${CONTAINER_PREFIX}_dify_sandbox:8194"
       CODE_EXECUTION_API_KEY: dify-sandbox
       CONSOLE_API_URL: "${DIFY_URL}"
       CONSOLE_WEB_URL: "${DIFY_URL}"
@@ -118,9 +118,9 @@ services:
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
-      CELERY_BROKER_URL: "redis://redis:6379/1"
+      CELERY_BROKER_URL: "redis://${CONTAINER_PREFIX}_redis:6379/1"
       STORAGE_TYPE: local
-      CODE_EXECUTION_ENDPOINT: "http://dify_sandbox:8194"
+      CODE_EXECUTION_ENDPOINT: "http://${CONTAINER_PREFIX}_dify_sandbox:8194"
       CODE_EXECUTION_API_KEY: dify-sandbox
     volumes:
       - ./volumes/app/storage:/app/api/storage
