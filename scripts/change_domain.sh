@@ -28,18 +28,28 @@ show_help() {
     echo "  --dify <域名>        设置Dify域名"
     echo "  --n8n <域名>         设置n8n域名"
     echo "  --oneapi <域名>      设置OneAPI域名"
+    echo "  --ragflow <域名>     设置RAGFlow域名"
     echo "  --port <端口>        设置域名模式下的端口（可选，默认80）"
     echo "  --disable-domain     禁用域名模式，使用IP+端口"
     echo "  --show               显示当前域名配置"
+    echo "  --test               测试域名连通性"
+    echo "  --dns-check          检查域名DNS解析"
     echo "  --apply              应用配置更改（重启相关服务）"
     echo "  -h, --help           显示此帮助信息"
     echo ""
     echo "示例:"
     echo "  $0 --show                                    # 显示当前配置"
     echo "  $0 --dify app.example.com --apply           # 只修改Dify域名"
-    echo "  $0 --dify dify.example.com --n8n n8n.example.com --oneapi api.example.com --apply"
+    echo "  $0 --dify dify.example.com --n8n n8n.example.com --oneapi api.example.com --ragflow rag.example.com --apply"
     echo "  $0 --dify dify.example.com --port 8080 --apply    # 使用自定义端口"
     echo "  $0 --disable-domain --apply                       # 禁用域名模式"
+    echo "  $0 --test                                         # 测试所有域名连通性"
+    echo "  $0 --dns-check                                    # 检查域名DNS解析"
+    echo ""
+    echo "注意:"
+    echo "  - 域名模式下，所有服务通过Nginx反向代理访问"
+    echo "  - 确保域名已正确解析到服务器IP: $SERVER_IP"
+    echo "  - 修改域名后建议测试连通性"
 }
 
 # 显示当前域名配置
@@ -48,6 +58,7 @@ show_current_config() {
     echo "Dify域名: ${DIFY_DOMAIN:-未设置}"
     echo "n8n域名: ${N8N_DOMAIN:-未设置}"
     echo "OneAPI域名: ${ONEAPI_DOMAIN:-未设置}"
+    echo "RAGFlow域名: ${RAGFLOW_DOMAIN:-未设置}"
     echo "端口: ${DOMAIN_PORT:-80 (默认)}"
     echo "使用模式: $([ "$USE_DOMAIN" = true ] && echo "域名模式" || echo "IP模式")"
     echo "服务器IP: $SERVER_IP"
@@ -58,6 +69,14 @@ show_current_config() {
         echo "Dify: $DIFY_URL"
         echo "n8n: $N8N_URL"
         echo "OneAPI: $ONEAPI_URL"
+        echo "RAGFlow: $RAGFLOW_URL"
+
+        # 显示Nginx监听端口
+        if [ -n "$DOMAIN_PORT" ] && [ "$DOMAIN_PORT" != "80" ]; then
+            echo "Nginx监听端口: $DOMAIN_PORT"
+        else
+            echo "Nginx监听端口: 80 (默认)"
+        fi
     else
         echo ""
         echo -e "${BLUE}=== 当前访问地址 ===${NC}"
@@ -65,7 +84,19 @@ show_current_config() {
         echo "Dify: http://${SERVER_IP}:${DIFY_WEB_PORT}"
         echo "n8n: http://${SERVER_IP}:${N8N_WEB_PORT}"
         echo "OneAPI: http://${SERVER_IP}:${ONEAPI_WEB_PORT}"
+        echo "RAGFlow: http://${SERVER_IP}:${RAGFLOW_WEB_PORT}"
     fi
+
+    # 显示服务状态
+    echo ""
+    echo -e "${BLUE}=== 相关服务状态 ===${NC}"
+    for service in nginx dify_web n8n oneapi ragflow; do
+        if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_${service}"; then
+            echo "✅ $service: 运行中"
+        else
+            echo "❌ $service: 未运行"
+        fi
+    done
 }
 
 # 验证域名格式
@@ -78,6 +109,11 @@ validate_domain() {
 
     # 基本域名格式检查
     if [[ ! "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+        return 1
+    fi
+
+    # 检查域名长度
+    if [ ${#domain} -gt 253 ]; then
         return 1
     fi
 
@@ -99,13 +135,120 @@ validate_port() {
     return 0
 }
 
+# 检查域名DNS解析
+check_domain_resolution() {
+    local domains=("$@")
+
+    if [ ${#domains[@]} -eq 0 ]; then
+        if [ "$USE_DOMAIN" = true ]; then
+            domains=("$DIFY_DOMAIN" "$N8N_DOMAIN" "$ONEAPI_DOMAIN" "$RAGFLOW_DOMAIN")
+        else
+            warning "当前未启用域名模式"
+            return 0
+        fi
+    fi
+
+    echo -e "${BLUE}=== 域名DNS解析检查 ===${NC}"
+
+    for domain in "${domains[@]}"; do
+        if [ -n "$domain" ]; then
+            echo -n "检查域名 $domain ... "
+
+            # 使用多种方法检查DNS解析
+            local resolved_ip=""
+
+            # 尝试使用dig
+            if command -v dig >/dev/null 2>&1; then
+                resolved_ip=$(dig +short "$domain" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+            fi
+
+            # 如果dig失败，尝试使用nslookup
+            if [ -z "$resolved_ip" ] && command -v nslookup >/dev/null 2>&1; then
+                resolved_ip=$(nslookup "$domain" 2>/dev/null | awk '/^Address: / { print $2 }' | head -1)
+            fi
+
+            # 如果都失败，尝试使用getent
+            if [ -z "$resolved_ip" ] && command -v getent >/dev/null 2>&1; then
+                resolved_ip=$(getent hosts "$domain" 2>/dev/null | awk '{ print $1 }' | head -1)
+            fi
+
+            if [ -n "$resolved_ip" ]; then
+                if [ "$resolved_ip" = "$SERVER_IP" ]; then
+                    echo "✅ 解析正确 ($resolved_ip)"
+                else
+                    echo "⚠️  解析到 $resolved_ip，但服务器IP是 $SERVER_IP"
+                fi
+            else
+                echo "❌ 解析失败或域名不存在"
+            fi
+        fi
+    done
+}
+
+# 测试域名连通性
+test_domain_connectivity() {
+    local domains=("$@")
+    local test_port="${DOMAIN_PORT:-80}"
+
+    if [ ${#domains[@]} -eq 0 ]; then
+        if [ "$USE_DOMAIN" = true ]; then
+            domains=("$DIFY_DOMAIN" "$N8N_DOMAIN" "$ONEAPI_DOMAIN" "$RAGFLOW_DOMAIN")
+        else
+            warning "当前未启用域名模式"
+            return 0
+        fi
+    fi
+
+    echo -e "${BLUE}=== 域名连通性测试 ===${NC}"
+
+    for domain in "${domains[@]}"; do
+        if [ -n "$domain" ]; then
+            echo -n "测试域名 $domain:$test_port ... "
+
+            # 构建测试URL
+            local test_url="http://$domain"
+            if [ "$test_port" != "80" ]; then
+                test_url="${test_url}:${test_port}"
+            fi
+
+            # 测试HTTP连通性
+            if curl -s --connect-timeout 10 --max-time 20 -o /dev/null -w "%{http_code}" "$test_url" >/dev/null 2>&1; then
+                local http_code=$(curl -s --connect-timeout 10 --max-time 20 -o /dev/null -w "%{http_code}" "$test_url" 2>/dev/null)
+                case "$http_code" in
+                    200|301|302|403)
+                        echo "✅ 连通正常 (HTTP $http_code)"
+                        ;;
+                    000)
+                        echo "❌ 连接失败"
+                        ;;
+                    *)
+                        echo "⚠️  连通但返回 HTTP $http_code"
+                        ;;
+                esac
+            else
+                # 如果HTTP失败，测试TCP连接
+                if command -v nc >/dev/null 2>&1; then
+                    if nc -z -w5 "$domain" "$test_port" 2>/dev/null; then
+                        echo "⚠️  TCP连通但HTTP失败"
+                    else
+                        echo "❌ 连接失败"
+                    fi
+                else
+                    echo "❌ 连接失败"
+                fi
+            fi
+        fi
+    done
+}
+
 # 更新配置文件
 update_config_file() {
     local new_dify_domain="$1"
     local new_n8n_domain="$2"
     local new_oneapi_domain="$3"
-    local new_domain_port="$4"
-    local disable_domain="$5"
+    local new_ragflow_domain="$4"
+    local new_domain_port="$5"
+    local disable_domain="$6"
 
     log "更新配置文件..."
 
@@ -120,6 +263,7 @@ update_config_file() {
         config_content=$(echo "$config_content" | sed 's/^DIFY_DOMAIN=.*/DIFY_DOMAIN=""/')
         config_content=$(echo "$config_content" | sed 's/^N8N_DOMAIN=.*/N8N_DOMAIN=""/')
         config_content=$(echo "$config_content" | sed 's/^ONEAPI_DOMAIN=.*/ONEAPI_DOMAIN=""/')
+        config_content=$(echo "$config_content" | sed 's/^RAGFLOW_DOMAIN=.*/RAGFLOW_DOMAIN=""/')
         config_content=$(echo "$config_content" | sed 's/^DOMAIN_PORT=.*/DOMAIN_PORT=""/')
         success "已禁用域名模式"
     else
@@ -137,6 +281,11 @@ update_config_file() {
         if [ -n "$new_oneapi_domain" ]; then
             config_content=$(echo "$config_content" | sed "s/^ONEAPI_DOMAIN=.*/ONEAPI_DOMAIN=\"$new_oneapi_domain\"/")
             success "OneAPI域名已更新: $new_oneapi_domain"
+        fi
+
+        if [ -n "$new_ragflow_domain" ]; then
+            config_content=$(echo "$config_content" | sed "s/^RAGFLOW_DOMAIN=.*/RAGFLOW_DOMAIN=\"$new_ragflow_domain\"/")
+            success "RAGFlow域名已更新: $new_ragflow_domain"
         fi
 
         if [ -n "$new_domain_port" ]; then
@@ -163,16 +312,19 @@ regenerate_configs() {
     if [ -f "modules/nginx.sh" ]; then
         source modules/nginx.sh
         generate_nginx_config
+        generate_nginx_compose
         success "Nginx配置已更新"
     fi
 
-    # 重新生成各应用配置
-    for app in dify n8n oneapi; do
+    # 重新生成各应用配置（域名模式影响端口暴露）
+    for app in dify n8n oneapi ragflow; do
         local compose_file="docker-compose-${app}.yml"
         if [ -f "$compose_file" ]; then
-            source "modules/${app}.sh"
-            eval "generate_${app}_compose"
-            success "${app}配置已更新"
+            if [ -f "modules/${app}.sh" ]; then
+                source "modules/${app}.sh"
+                eval "generate_${app}_compose"
+                success "${app}配置已更新"
+            fi
         fi
     done
 
@@ -185,7 +337,7 @@ apply_changes() {
 
     # 检查是否有运行的服务
     local running_services=()
-    for service in nginx dify_web dify_api n8n oneapi; do
+    for service in nginx dify_web dify_api dify_worker n8n oneapi ragflow; do
         if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_${service}"; then
             running_services+=("$service")
         fi
@@ -196,10 +348,20 @@ apply_changes() {
         return 0
     fi
 
-    log "重启相关服务以应用配置更改..."
+    log "需要重启的服务: ${running_services[*]}"
+
+    # 确认操作
+    echo -e "\n${YELLOW}注意: 应用域名更改将重启相关服务，可能导致短暂的服务中断。${NC}"
+    read -p "确定要继续吗？(输入 'yes' 确认): " confirm
+
+    if [ "$confirm" != "yes" ]; then
+        log "域名更改已取消"
+        return 0
+    fi
 
     # 重启顺序：先重启应用，再重启Nginx
-    for service in dify_web dify_api n8n oneapi; do
+    log "重启应用服务..."
+    for service in dify_web dify_api dify_worker n8n oneapi ragflow; do
         if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_${service}"; then
             case "$service" in
                 dify_*)
@@ -211,21 +373,28 @@ apply_changes() {
                 oneapi)
                     docker-compose -f docker-compose-oneapi.yml restart "$service" 2>/dev/null
                     ;;
+                ragflow)
+                    docker-compose -f docker-compose-ragflow.yml restart "$service" 2>/dev/null
+                    ;;
             esac
             log "已重启服务: $service"
+            sleep 5
         fi
     done
 
     # 最后重启Nginx
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_nginx"; then
+        log "重启Nginx服务..."
         docker-compose -f docker-compose-nginx.yml restart nginx 2>/dev/null
         log "已重启Nginx服务"
+        sleep 10
     fi
 
     success "配置更改已应用"
 
     # 等待服务启动
-    sleep 10
+    log "等待服务完全启动..."
+    sleep 15
 
     # 显示新的访问地址
     echo -e "\n${BLUE}=== 更新后的访问地址 ===${NC}"
@@ -236,58 +405,14 @@ apply_changes() {
         echo "Dify: $DIFY_URL"
         echo "n8n: $N8N_URL"
         echo "OneAPI: $ONEAPI_URL"
+        echo "RAGFlow: $RAGFLOW_URL"
     else
         echo "统一入口: http://${SERVER_IP}:8604"
         echo "Dify: http://${SERVER_IP}:${DIFY_WEB_PORT}"
         echo "n8n: http://${SERVER_IP}:${N8N_WEB_PORT}"
         echo "OneAPI: http://${SERVER_IP}:${ONEAPI_WEB_PORT}"
+        echo "RAGFlow: http://${SERVER_IP}:${RAGFLOW_WEB_PORT}"
     fi
-}
-
-# 检查域名解析
-check_domain_resolution() {
-    local domains=("$@")
-
-    log "检查域名解析..."
-
-    for domain in "${domains[@]}"; do
-        if [ -n "$domain" ]; then
-            local resolved_ip=$(dig +short "$domain" 2>/dev/null | tail -1)
-            if [ -n "$resolved_ip" ]; then
-                if [ "$resolved_ip" = "$SERVER_IP" ]; then
-                    success "域名 $domain 解析正确: $resolved_ip"
-                else
-                    warning "域名 $domain 解析到 $resolved_ip，但服务器IP是 $SERVER_IP"
-                fi
-            else
-                warning "无法解析域名 $domain"
-            fi
-        fi
-    done
-}
-
-# 测试域名连通性
-test_domain_connectivity() {
-    local domains=("$@")
-
-    log "测试域名连通性..."
-
-    for domain in "${domains[@]}"; do
-        if [ -n "$domain" ]; then
-            # 构建测试URL
-            local test_url="http://$domain"
-            if [ -n "$DOMAIN_PORT" ] && [ "$DOMAIN_PORT" != "80" ]; then
-                test_url="${test_url}:${DOMAIN_PORT}"
-            fi
-
-            # 测试连通性
-            if curl -s --connect-timeout 10 --max-time 20 "$test_url" >/dev/null 2>&1; then
-                success "域名 $domain 连通性测试通过"
-            else
-                warning "域名 $domain 连通性测试失败"
-            fi
-        fi
-    done
 }
 
 # 生成域名配置备份
@@ -305,6 +430,7 @@ backup_domain_config() {
 DIFY_DOMAIN_OLD="$DIFY_DOMAIN"
 N8N_DOMAIN_OLD="$N8N_DOMAIN"
 ONEAPI_DOMAIN_OLD="$ONEAPI_DOMAIN"
+RAGFLOW_DOMAIN_OLD="$RAGFLOW_DOMAIN"
 DOMAIN_PORT_OLD="$DOMAIN_PORT"
 USE_DOMAIN_OLD="$USE_DOMAIN"
 
@@ -313,6 +439,10 @@ $([ "$USE_DOMAIN" = true ] && echo "# 域名模式访问地址" || echo "# IP模
 DIFY_URL_OLD="$DIFY_URL"
 N8N_URL_OLD="$N8N_URL"
 ONEAPI_URL_OLD="$ONEAPI_URL"
+RAGFLOW_URL_OLD="$RAGFLOW_URL"
+
+# Nginx配置
+NGINX_PORT_OLD="$NGINX_PORT"
 EOF
 
     log "域名配置已备份至: $backup_file"
@@ -323,8 +453,9 @@ validate_domain_config() {
     local new_dify_domain="$1"
     local new_n8n_domain="$2"
     local new_oneapi_domain="$3"
-    local new_domain_port="$4"
-    local disable_domain="$5"
+    local new_ragflow_domain="$4"
+    local new_domain_port="$5"
+    local disable_domain="$6"
 
     log "验证域名配置..."
 
@@ -342,6 +473,9 @@ validate_domain_config() {
         has_domain=true
     fi
     if [ -n "$new_oneapi_domain" ] || [ -n "$ONEAPI_DOMAIN" ]; then
+        has_domain=true
+    fi
+    if [ -n "$new_ragflow_domain" ] || [ -n "$RAGFLOW_DOMAIN" ]; then
         has_domain=true
     fi
 
@@ -371,15 +505,80 @@ validate_domain_config() {
     return 0
 }
 
+# 生成域名配置报告
+generate_domain_report() {
+    local report_file="$INSTALL_PATH/logs/domain_report_$(date +%Y%m%d_%H%M%S).txt"
+
+    mkdir -p "$(dirname "$report_file")"
+
+    {
+        echo "域名配置报告"
+        echo "============="
+        echo "生成时间: $(date)"
+        echo "服务器IP: $SERVER_IP"
+        echo ""
+
+        if [ "$USE_DOMAIN" = true ]; then
+            echo "当前模式: 域名模式"
+            echo "域名配置:"
+            echo "- Dify: $DIFY_DOMAIN"
+            echo "- n8n: $N8N_DOMAIN"
+            echo "- OneAPI: $ONEAPI_DOMAIN"
+            echo "- RAGFlow: $RAGFLOW_DOMAIN"
+            echo "- 端口: ${DOMAIN_PORT:-80}"
+            echo ""
+
+            echo "访问地址:"
+            echo "- Dify: $DIFY_URL"
+            echo "- n8n: $N8N_URL"
+            echo "- OneAPI: $ONEAPI_URL"
+            echo "- RAGFlow: $RAGFLOW_URL"
+            echo ""
+
+            echo "DNS解析检查:"
+            check_domain_resolution "$DIFY_DOMAIN" "$N8N_DOMAIN" "$ONEAPI_DOMAIN" "$RAGFLOW_DOMAIN" 2>&1
+
+            echo ""
+            echo "连通性测试:"
+            test_domain_connectivity "$DIFY_DOMAIN" "$N8N_DOMAIN" "$ONEAPI_DOMAIN" "$RAGFLOW_DOMAIN" 2>&1
+        else
+            echo "当前模式: IP模式"
+            echo "访问地址:"
+            echo "- 统一入口: http://${SERVER_IP}:8604"
+            echo "- Dify: http://${SERVER_IP}:${DIFY_WEB_PORT}"
+            echo "- n8n: http://${SERVER_IP}:${N8N_WEB_PORT}"
+            echo "- OneAPI: http://${SERVER_IP}:${ONEAPI_WEB_PORT}"
+            echo "- RAGFlow: http://${SERVER_IP}:${RAGFLOW_WEB_PORT}"
+        fi
+
+        echo ""
+        echo "服务状态:"
+        for service in nginx dify_web n8n oneapi ragflow; do
+            if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_${service}"; then
+                echo "✅ $service: 运行中"
+            else
+                echo "❌ $service: 未运行"
+            fi
+        done
+
+    } > "$report_file"
+
+    success "域名配置报告已生成: $report_file"
+}
+
 # 主函数
 main() {
     local new_dify_domain=""
     local new_n8n_domain=""
     local new_oneapi_domain=""
+    local new_ragflow_domain=""
     local new_domain_port=""
     local disable_domain=false
     local show_config=false
+    local test_connectivity=false
+    local dns_check=false
     local apply_changes_flag=false
+    local generate_report=false
 
     # 解析参数
     while [[ $# -gt 0 ]]; do
@@ -408,6 +607,14 @@ main() {
                 fi
                 shift 2
                 ;;
+            --ragflow)
+                new_ragflow_domain="$2"
+                if ! validate_domain "$new_ragflow_domain"; then
+                    error "无效的RAGFlow域名格式: $new_ragflow_domain"
+                    exit 1
+                fi
+                shift 2
+                ;;
             --port)
                 new_domain_port="$2"
                 if ! validate_port "$new_domain_port"; then
@@ -424,8 +631,20 @@ main() {
                 show_config=true
                 shift
                 ;;
+            --test)
+                test_connectivity=true
+                shift
+                ;;
+            --dns-check)
+                dns_check=true
+                shift
+                ;;
             --apply)
                 apply_changes_flag=true
+                shift
+                ;;
+            --report)
+                generate_report=true
                 shift
                 ;;
             -h|--help)
@@ -446,9 +665,27 @@ main() {
         exit 0
     fi
 
+    # 如果只是DNS检查
+    if [ "$dns_check" = true ]; then
+        check_domain_resolution
+        exit 0
+    fi
+
+    # 如果只是连通性测试
+    if [ "$test_connectivity" = true ]; then
+        test_domain_connectivity
+        exit 0
+    fi
+
+    # 如果生成报告
+    if [ "$generate_report" = true ]; then
+        generate_domain_report
+        exit 0
+    fi
+
     # 检查是否有配置更改
     local has_changes=false
-    if [ -n "$new_dify_domain" ] || [ -n "$new_n8n_domain" ] || [ -n "$new_oneapi_domain" ] || [ -n "$new_domain_port" ] || [ "$disable_domain" = true ]; then
+    if [ -n "$new_dify_domain" ] || [ -n "$new_n8n_domain" ] || [ -n "$new_oneapi_domain" ] || [ -n "$new_ragflow_domain" ] || [ -n "$new_domain_port" ] || [ "$disable_domain" = true ]; then
         has_changes=true
     fi
 
@@ -472,11 +709,12 @@ main() {
         [ -n "$new_dify_domain" ] && echo "- Dify域名: ${DIFY_DOMAIN:-未设置} → $new_dify_domain"
         [ -n "$new_n8n_domain" ] && echo "- n8n域名: ${N8N_DOMAIN:-未设置} → $new_n8n_domain"
         [ -n "$new_oneapi_domain" ] && echo "- OneAPI域名: ${ONEAPI_DOMAIN:-未设置} → $new_oneapi_domain"
+        [ -n "$new_ragflow_domain" ] && echo "- RAGFlow域名: ${RAGFLOW_DOMAIN:-未设置} → $new_ragflow_domain"
         [ -n "$new_domain_port" ] && echo "- 端口: ${DOMAIN_PORT:-80} → $new_domain_port"
     fi
 
     # 验证新配置
-    if ! validate_domain_config "$new_dify_domain" "$new_n8n_domain" "$new_oneapi_domain" "$new_domain_port" "$disable_domain"; then
+    if ! validate_domain_config "$new_dify_domain" "$new_n8n_domain" "$new_oneapi_domain" "$new_ragflow_domain" "$new_domain_port" "$disable_domain"; then
         error "域名配置验证失败"
         exit 1
     fi
@@ -496,14 +734,16 @@ main() {
         [ -n "$new_dify_domain" ] && domains_to_check+=("$new_dify_domain")
         [ -n "$new_n8n_domain" ] && domains_to_check+=("$new_n8n_domain")
         [ -n "$new_oneapi_domain" ] && domains_to_check+=("$new_oneapi_domain")
+        [ -n "$new_ragflow_domain" ] && domains_to_check+=("$new_ragflow_domain")
 
         if [ ${#domains_to_check[@]} -gt 0 ]; then
+            echo -e "\n${BLUE}=== 检查新域名解析 ===${NC}"
             check_domain_resolution "${domains_to_check[@]}"
         fi
     fi
 
     # 应用配置更改
-    update_config_file "$new_dify_domain" "$new_n8n_domain" "$new_oneapi_domain" "$new_domain_port" "$disable_domain"
+    update_config_file "$new_dify_domain" "$new_n8n_domain" "$new_oneapi_domain" "$new_ragflow_domain" "$new_domain_port" "$disable_domain"
     regenerate_configs
     apply_changes
 
@@ -514,9 +754,10 @@ main() {
         [ -n "$new_dify_domain" ] && test_domains+=("$new_dify_domain")
         [ -n "$new_n8n_domain" ] && test_domains+=("$new_n8n_domain")
         [ -n "$new_oneapi_domain" ] && test_domains+=("$new_oneapi_domain")
+        [ -n "$new_ragflow_domain" ] && test_domains+=("$new_ragflow_domain")
 
         if [ ${#test_domains[@]} -gt 0 ]; then
-            sleep 15  # 等待服务完全启动
+            sleep 20  # 等待服务完全启动
             test_domain_connectivity "${test_domains[@]}"
         fi
     fi
@@ -531,6 +772,7 @@ main() {
         echo "- Dify: http://${SERVER_IP}:${DIFY_WEB_PORT}"
         echo "- n8n: http://${SERVER_IP}:${N8N_WEB_PORT}"
         echo "- OneAPI: http://${SERVER_IP}:${ONEAPI_WEB_PORT}"
+        echo "- RAGFlow: http://${SERVER_IP}:${RAGFLOW_WEB_PORT}"
     else
         echo "域名访问地址已更新："
         source modules/config.sh
@@ -538,6 +780,7 @@ main() {
         echo "- Dify: $DIFY_URL"
         echo "- n8n: $N8N_URL"
         echo "- OneAPI: $ONEAPI_URL"
+        echo "- RAGFlow: $RAGFLOW_URL"
     fi
 
     echo ""
@@ -545,6 +788,8 @@ main() {
     echo "- 如果域名无法访问，请检查DNS解析设置"
     echo "- 使用 ./scripts/logs.sh nginx 查看Nginx日志"
     echo "- 使用 ./scripts/manage.sh status 检查服务状态"
+    echo "- 使用 $0 --test 测试域名连通性"
+    echo "- 使用 $0 --report 生成详细配置报告"
 }
 
 # 运行主函数

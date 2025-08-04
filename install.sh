@@ -21,7 +21,7 @@ show_help() {
     echo "选项:"
     echo "  --all                    完整安装所有服务"
     echo "  --infrastructure         只安装基础设施(数据库、Redis、Nginx)"
-    echo "  --app <name>            安装指定应用 (dify|n8n|oneapi)"
+    echo "  --app <name>            安装指定应用 (dify|n8n|oneapi|ragflow)"
     echo "  --apps <name1,name2>    安装多个应用，用逗号分隔"
     echo "  --update-config         更新配置文件"
     echo "  --status                查看服务状态"
@@ -33,6 +33,8 @@ show_help() {
     echo "  $0 --infrastructure     # 只安装基础设施"
     echo "  $0 --app dify           # 只安装Dify"
     echo "  $0 --apps dify,n8n      # 安装Dify和n8n"
+    echo "  $0 --app ragflow        # 只安装RAGFlow"
+    echo "  $0 --apps dify,ragflow  # 安装Dify和RAGFlow"
     echo ""
     echo "管理脚本:"
     echo "  scripts/backup.sh       # 数据备份"
@@ -77,6 +79,11 @@ install_app() {
             source modules/oneapi.sh
             install_oneapi
             ;;
+        ragflow)
+            log "安装RAGFlow系统..."
+            source modules/ragflow.sh
+            install_ragflow
+            ;;
         *)
             error "未知的应用名称: $app_name"
             return 1
@@ -104,6 +111,7 @@ install_all() {
     install_app "dify"
     install_app "n8n"
     install_app "oneapi"
+    install_app "ragflow"
 
     # 配置Nginx
     source modules/nginx.sh
@@ -139,7 +147,7 @@ start_all_services() {
         sleep 45
 
         # 等待数据库服务完全启动
-        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 60
+        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_*} --silent" 60
         wait_for_service "postgres" "pg_isready -U postgres" 60
         wait_for_service "redis" "redis-cli ping" 30
 
@@ -174,6 +182,28 @@ start_all_services() {
         wait_for_service "n8n" "wget --quiet --tries=1 --spider http://localhost:5678/healthz" 60
     fi
 
+    # 启动RAGFlow服务
+    if [ -f "docker-compose-ragflow.yml" ]; then
+        log "启动RAGFlow服务（这可能需要较长时间）..."
+
+        # 先启动Elasticsearch
+        docker-compose -f docker-compose-ragflow.yml up -d elasticsearch
+        wait_for_service "elasticsearch" "curl -f http://localhost:9200/_cluster/health" 120
+
+        # 启动MinIO
+        docker-compose -f docker-compose-ragflow.yml up -d minio
+        wait_for_service "minio" "curl -f http://localhost:9000/minio/health/live" 60
+
+        # 初始化MinIO和数据库
+        source modules/ragflow.sh
+        initialize_minio_buckets
+        initialize_ragflow_database
+
+        # 启动RAGFlow核心服务
+        docker-compose -f docker-compose-ragflow.yml up -d ragflow
+        wait_for_service "ragflow" "curl -f http://localhost:80/health" 180
+    fi
+
     # 最后启动Nginx
     if [ -f "docker-compose-nginx.yml" ]; then
         docker-compose -f docker-compose-nginx.yml up -d
@@ -191,14 +221,28 @@ check_services_status() {
     docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "(NAMES|${CONTAINER_PREFIX})"
 
     echo -e "\n${BLUE}=== 健康检查 ===${NC}"
-    check_service_health "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 2>/dev/null || echo "❌ MySQL: 未运行或连接失败"
+    check_service_health "mysql" "mysqladmin ping -h localhost -u root -p${DB_*} --silent" 2>/dev/null || echo "❌ MySQL: 未运行或连接失败"
     check_service_health "postgres" "pg_isready -U postgres" 2>/dev/null || echo "❌ PostgreSQL: 未运行或连接失败"
     check_service_health "redis" "redis-cli ping" 2>/dev/null || echo "❌ Redis: 未运行或连接失败"
 
     # 检查应用服务
-    for service in dify_api dify_web n8n oneapi nginx; do
+    for service in dify_api dify_web n8n oneapi nginx elasticsearch minio ragflow; do
         if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_${service}"; then
-            echo "✅ $service: 运行正常"
+            local health_status=$(docker inspect --format='{{.State.Health.Status}}' "${CONTAINER_PREFIX}_${service}" 2>/dev/null || echo "no-health-check")
+            case "$health_status" in
+                healthy)
+                    echo "✅ $service: 运行正常"
+                    ;;
+                unhealthy)
+                    echo "❌ $service: 运行异常"
+                    ;;
+                starting)
+                    echo "🔄 $service: 正在启动"
+                    ;;
+                *)
+                    echo "ℹ️  $service: 运行中"
+                    ;;
+            esac
         else
             echo "❌ $service: 未运行"
         fi
@@ -220,10 +264,12 @@ show_access_info() {
             echo "  - Dify: http://${DIFY_DOMAIN}:${DOMAIN_PORT}"
             echo "  - n8n: http://${N8N_DOMAIN}:${DOMAIN_PORT}"
             echo "  - OneAPI: http://${ONEAPI_DOMAIN}:${DOMAIN_PORT}"
+            echo "  - RAGFlow: http://${RAGFLOW_DOMAIN}:${DOMAIN_PORT}"
         else
             echo "  - Dify: http://${DIFY_DOMAIN}"
             echo "  - n8n: http://${N8N_DOMAIN}"
             echo "  - OneAPI: http://${ONEAPI_DOMAIN}"
+            echo "  - RAGFlow: http://${RAGFLOW_DOMAIN}"
         fi
     else
         echo "🌟 IP访问地址:"
@@ -231,6 +277,7 @@ show_access_info() {
         echo "  - Dify: http://${SERVER_IP}:${DIFY_WEB_PORT}"
         echo "  - n8n: http://${SERVER_IP}:${N8N_WEB_PORT}"
         echo "  - OneAPI: http://${SERVER_IP}:${ONEAPI_WEB_PORT}"
+        echo "  - RAGFlow: http://${SERVER_IP}:${RAGFLOW_WEB_PORT}"
     fi
 
     echo ""
@@ -243,8 +290,8 @@ show_access_info() {
     echo "  - 修改端口: ./scripts/change_port.sh"
     echo ""
     echo "🗄️  数据库信息:"
-    echo "  - MySQL: ${SERVER_IP}:${MYSQL_PORT} (root/${DB_PASSWORD})"
-    echo "  - PostgreSQL: ${SERVER_IP}:${POSTGRES_PORT} (postgres/${DB_PASSWORD})"
+    echo "  - MySQL: ${SERVER_IP}:${MYSQL_PORT} (root/${DB_*})"
+    echo "  - PostgreSQL: ${SERVER_IP}:${POSTGRES_PORT} (postgres/${DB_*})"
     echo "  - Redis: ${SERVER_IP}:${REDIS_PORT}"
     echo ""
     echo "📋 常用docker-compose命令（在 $INSTALL_PATH 目录下执行）:"
@@ -253,6 +300,7 @@ show_access_info() {
     echo "  - docker-compose -f docker-compose-dify.yml ps    # 查看Dify服务"
     echo "  - docker-compose -f docker-compose-n8n.yml ps     # 查看n8n服务"
     echo "  - docker-compose -f docker-compose-oneapi.yml ps  # 查看OneAPI服务"
+    echo "  - docker-compose -f docker-compose-ragflow.yml ps # 查看RAGFlow服务"
     echo "  - docker-compose -f docker-compose-nginx.yml ps   # 查看Nginx服务"
     echo ""
     echo "🔧 故障排除:"
@@ -266,13 +314,28 @@ show_access_info() {
     echo "  - IP模式: 使用IP+不同端口访问"
     echo "  - 可使用 ./scripts/change_domain.sh 修改域名配置"
     echo ""
-    warning "首次启动可能需要几分钟时间，请耐心等待服务完全启动。"
+
+    # 显示RAGFlow特殊信息
+    if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_ragflow"; then
+        echo "🤖 RAGFlow特别说明:"
+        echo "  - RAGFlow需要较多系统资源，首次启动可能需要10-15分钟"
+        echo "  - 默认管理员邮箱: admin@ragflow.io"
+        echo "  - 默认密码: ragflow123456 (首次登录后请修改)"
+        if [ "$USE_DOMAIN" = false ]; then
+            echo "  - MinIO控制台: http://${SERVER_IP}:${MINIO_CONSOLE_PORT}"
+            echo "  - Elasticsearch: http://${SERVER_IP}:${ELASTICSEARCH_PORT}"
+        fi
+        echo ""
+    fi
+
+    warning "首次启动可能需要几分钟时间，RAGFlow首次启动需要更长时间，请耐心等待服务完全启动。"
 
     if [ "$USE_DOMAIN" = true ]; then
         warning "使用域名模式，请确保以下域名已解析到 $SERVER_IP:"
         warning "  - $DIFY_DOMAIN"
         warning "  - $N8N_DOMAIN"
         warning "  - $ONEAPI_DOMAIN"
+        warning "  - $RAGFLOW_DOMAIN"
         if [ -n "$DOMAIN_PORT" ] && [ "$DOMAIN_PORT" != "80" ]; then
             warning "  - 端口: $DOMAIN_PORT"
         fi
@@ -347,6 +410,7 @@ show_help() {
     echo "  dify      Dify服务"
     echo "  n8n       n8n服务"
     echo "  oneapi    OneAPI服务"
+    echo "  ragflow   RAGFlow服务"
     echo "  nginx     Nginx服务"
     echo ""
     echo "示例:"
@@ -354,6 +418,7 @@ show_help() {
     echo "  $0 stop dify       # 停止Dify服务"
     echo "  $0 restart nginx   # 重启Nginx服务"
     echo "  $0 status          # 查看所有服务状态"
+    echo "  $0 start ragflow   # 启动RAGFlow服务"
 }
 
 # 启动服务
@@ -379,6 +444,9 @@ start_services() {
         oneapi)
             start_oneapi_services
             ;;
+        ragflow)
+            start_ragflow_services
+            ;;
         nginx)
             start_nginx_services
             ;;
@@ -400,6 +468,7 @@ stop_services() {
             docker-compose -f docker-compose-dify.yml down 2>/dev/null || true
             docker-compose -f docker-compose-n8n.yml down 2>/dev/null || true
             docker-compose -f docker-compose-oneapi.yml down 2>/dev/null || true
+            docker-compose -f docker-compose-ragflow.yml down 2>/dev/null || true
             docker-compose -f docker-compose-db.yml down 2>/dev/null || true
             ;;
         db)
@@ -413,6 +482,9 @@ stop_services() {
             ;;
         oneapi)
             docker-compose -f docker-compose-oneapi.yml down
+            ;;
+        ragflow)
+            docker-compose -f docker-compose-ragflow.yml down
             ;;
         nginx)
             docker-compose -f docker-compose-nginx.yml down
@@ -442,7 +514,7 @@ show_status() {
     docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "(NAMES|${CONTAINER_PREFIX})"
 
     echo -e "\n${BLUE}=== 服务健康检查 ===${NC}"
-    check_service_health "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 2>/dev/null || echo "❌ MySQL: 未运行或连接失败"
+    check_service_health "mysql" "mysqladmin ping -h localhost -u root -p${DB_*} --silent" 2>/dev/null || echo "❌ MySQL: 未运行或连接失败"
     check_service_health "postgres" "pg_isready -U postgres" 2>/dev/null || echo "❌ PostgreSQL: 未运行或连接失败"
     check_service_health "redis" "redis-cli ping" 2>/dev/null || echo "❌ Redis: 未运行或连接失败"
 
@@ -451,11 +523,13 @@ show_status() {
         echo "Dify: ${DIFY_URL}"
         echo "n8n: ${N8N_URL}"
         echo "OneAPI: ${ONEAPI_URL}"
+        echo "RAGFlow: ${RAGFLOW_URL}"
     else
         echo "统一入口: http://${SERVER_IP}:8604"
         echo "Dify: http://${SERVER_IP}:${DIFY_WEB_PORT}"
         echo "n8n: http://${SERVER_IP}:${N8N_WEB_PORT}"
         echo "OneAPI: http://${SERVER_IP}:${ONEAPI_WEB_PORT}"
+        echo "RAGFlow: http://${SERVER_IP}:${RAGFLOW_WEB_PORT}"
     fi
 }
 
@@ -498,6 +572,12 @@ start_app_services() {
         sleep 10
     fi
 
+    # 启动RAGFlow
+    if [ -f "docker-compose-ragflow.yml" ]; then
+        log "启动RAGFlow服务（需要较长时间）..."
+        start_ragflow_services
+    fi
+
     success "应用服务启动完成"
 }
 
@@ -535,6 +615,25 @@ start_oneapi_services() {
     if [ -f "docker-compose-oneapi.yml" ]; then
         docker-compose -f docker-compose-oneapi.yml up -d
         success "OneAPI服务启动完成"
+    fi
+}
+
+start_ragflow_services() {
+    log "启动RAGFlow服务..."
+    if [ -f "docker-compose-ragflow.yml" ]; then
+        # 先启动Elasticsearch
+        docker-compose -f docker-compose-ragflow.yml up -d elasticsearch
+        wait_for_service "elasticsearch" "curl -f http://localhost:9200/_cluster/health" 120
+
+        # 启动MinIO
+        docker-compose -f docker-compose-ragflow.yml up -d minio
+        wait_for_service "minio" "curl -f http://localhost:9000/minio/health/live" 60
+
+        # 启动RAGFlow核心服务
+        docker-compose -f docker-compose-ragflow.yml up -d ragflow
+        wait_for_service "ragflow" "curl -f http://localhost:80/health" 180
+
+        success "RAGFlow服务启动完成"
     fi
 }
 
@@ -586,11 +685,11 @@ fi
 show_help() {
     echo "日志查看脚本"
     echo "用法: $0 [服务名]"
-    echo "服务名: mysql, postgres, redis, dify_api, dify_web, n8n, oneapi, nginx, all"
+    echo "服务名: mysql, postgres, redis, dify_api, dify_web, n8n, oneapi, ragflow, elasticsearch, minio, nginx, all"
 }
 
 case "${1:-all}" in
-    mysql|postgres|redis|dify_api|dify_web|dify_worker|dify_sandbox|n8n|oneapi|nginx)
+    mysql|postgres|redis|dify_api|dify_web|dify_worker|dify_sandbox|n8n|oneapi|ragflow|elasticsearch|minio|nginx)
         docker logs -f --tail=100 "${CONTAINER_PREFIX}_$1" 2>/dev/null || echo "服务 $1 未运行"
         ;;
     all)
@@ -625,12 +724,12 @@ log "开始备份数据..."
 
 # 备份MySQL
 if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_mysql"; then
-    docker exec "${CONTAINER_PREFIX}_mysql" mysqldump -u root -p"${DB_PASSWORD}" --all-databases > "${BACKUP_DIR}/mysql.sql"
+    docker exec "${CONTAINER_PREFIX}_mysql" mysqldump -u root -p"${DB_*}" --all-databases > "${BACKUP_DIR}/mysql.sql"
 fi
 
 # 备份PostgreSQL
 if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres"; then
-    docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" pg_dumpall -U postgres > "${BACKUP_DIR}/postgres.sql"
+    docker exec -e PGPASSWORD="${DB_*}" "${CONTAINER_PREFIX}_postgres" pg_dumpall -U postgres > "${BACKUP_DIR}/postgres.sql"
 fi
 
 # 备份应用数据
@@ -662,13 +761,13 @@ echo "从 $BACKUP_DIR 恢复数据..."
 # 恢复MySQL
 if [ -f "${BACKUP_DIR}/mysql.sql" ]; then
     echo "恢复MySQL数据..."
-    docker exec -i "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" < "${BACKUP_DIR}/mysql.sql"
+    docker exec -i "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" < "${BACKUP_DIR}/mysql.sql"
 fi
 
 # 恢复PostgreSQL
 if [ -f "${BACKUP_DIR}/postgres.sql" ]; then
     echo "恢复PostgreSQL数据..."
-    docker exec -i -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres < "${BACKUP_DIR}/postgres.sql"
+    docker exec -i -e PGPASSWORD="${DB_*}" "${CONTAINER_PREFIX}_postgres" psql -U postgres < "${BACKUP_DIR}/postgres.sql"
 fi
 
 echo "恢复完成"
@@ -685,6 +784,7 @@ generate_change_domain_script() {
 echo "域名修改脚本"
 echo "用法: $0 --show  # 显示当前配置"
 echo "     $0 --dify <域名> --apply  # 修改Dify域名"
+echo "     $0 --ragflow <域名> --apply  # 修改RAGFlow域名"
 EOF
 }
 
@@ -696,6 +796,7 @@ generate_change_port_script() {
 echo "端口修改脚本"
 echo "用法: $0 --show  # 显示当前配置"
 echo "     $0 --dify <端口> --apply  # 修改Dify端口"
+echo "     $0 --ragflow <端口> --apply  # 修改RAGFlow端口"
 EOF
 }
 

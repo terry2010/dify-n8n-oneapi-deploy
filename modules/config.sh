@@ -8,6 +8,7 @@
 DIFY_DOMAIN="dify.demodomain.com"        # Dify系统域名
 N8N_DOMAIN="n8n.demodomain.com"          # n8n系统域名
 ONEAPI_DOMAIN="oneapi.demodomain.com"    # OneAPI系统域名
+RAGFLOW_DOMAIN="ragflow.demodomain.com"  # RAGFlow系统域名
 
 # 域名模式下的端口配置（可选，留空则使用80端口）
 DOMAIN_PORT=""                           # 域名模式下的端口，如8080，留空则使用80
@@ -16,6 +17,7 @@ DOMAIN_PORT=""                           # 域名模式下的端口，如8080，
 # DIFY_DOMAIN=""
 # N8N_DOMAIN=""
 # ONEAPI_DOMAIN=""
+# RAGFLOW_DOMAIN=""
 
 # ========== 基础配置区域 ==========
 SERVER_IP=""  # 留空自动获取，或手动设置IP
@@ -26,21 +28,34 @@ CONTAINER_PREFIX="aiserver"  # 容器名前缀
 N8N_WEB_PORT=8601
 DIFY_WEB_PORT=8602
 ONEAPI_WEB_PORT=8603
+RAGFLOW_WEB_PORT=8605
 MYSQL_PORT=3306
 POSTGRES_PORT=5433
 REDIS_PORT=6379
 NGINX_PORT=80  # 默认Nginx端口，域名模式下可能被DOMAIN_PORT覆盖
 DIFY_API_PORT=5002  # Dify API端口
+RAGFLOW_API_PORT=9380  # RAGFlow API端口
+
+# RAGFlow额外端口配置
+ELASTICSEARCH_PORT=9200
+MINIO_API_PORT=9001
+MINIO_CONSOLE_PORT=9002
 
 # 数据库密码配置
 DB_PASSWORD="654321"  # MySQL和PostgreSQL的root/postgres密码
 REDIS_PASSWORD=""  # Redis密码（留空表示无密码）
+
+# RAGFlow配置
+RAGFLOW_SECRET_KEY="ragflow-secret-key-change-this"  # RAGFlow密钥
+MINIO_ACCESS_KEY="minioadmin"  # MinIO访问密钥
+MINIO_SECRET_KEY="minioadmin"  # MinIO安全密钥
 
 # 全局变量
 USE_DOMAIN=false
 DIFY_URL=""
 N8N_URL=""
 ONEAPI_URL=""
+RAGFLOW_URL=""
 
 # 初始化配置
 init_config() {
@@ -53,7 +68,7 @@ init_config() {
     fi
 
     # 检查域名配置
-    if [ -n "$DIFY_DOMAIN" ] && [ -n "$N8N_DOMAIN" ] && [ -n "$ONEAPI_DOMAIN" ]; then
+    if [ -n "$DIFY_DOMAIN" ] && [ -n "$N8N_DOMAIN" ] && [ -n "$ONEAPI_DOMAIN" ] && [ -n "$RAGFLOW_DOMAIN" ]; then
         USE_DOMAIN=true
         # 确定域名模式下使用的端口
         if [ -n "$DOMAIN_PORT" ]; then
@@ -67,16 +82,19 @@ init_config() {
             DIFY_URL="http://$DIFY_DOMAIN:$DOMAIN_PORT"
             N8N_URL="http://$N8N_DOMAIN:$DOMAIN_PORT"
             ONEAPI_URL="http://$ONEAPI_DOMAIN:$DOMAIN_PORT"
+            RAGFLOW_URL="http://$RAGFLOW_DOMAIN:$DOMAIN_PORT"
         else
             DIFY_URL="http://$DIFY_DOMAIN"
             N8N_URL="http://$N8N_DOMAIN"
             ONEAPI_URL="http://$ONEAPI_DOMAIN"
+            RAGFLOW_URL="http://$RAGFLOW_DOMAIN"
         fi
     else
         USE_DOMAIN=false
-        DIFY_URL="http://$SERVER_IP:$DIFY_API_PORT"
+        DIFY_URL="http://$SERVER_IP:$DIFY_WEB_PORT"
         N8N_URL="http://$SERVER_IP:$N8N_WEB_PORT"
         ONEAPI_URL="http://$SERVER_IP:$ONEAPI_WEB_PORT"
+        RAGFLOW_URL="http://$SERVER_IP:$RAGFLOW_WEB_PORT"
     fi
 
     log "配置初始化完成"
@@ -103,7 +121,7 @@ validate_config() {
 
     # 检查端口冲突
     if [ "$USE_DOMAIN" = false ]; then
-        local ports=($N8N_WEB_PORT $DIFY_WEB_PORT $ONEAPI_WEB_PORT $MYSQL_PORT $POSTGRES_PORT $REDIS_PORT $DIFY_API_PORT)
+        local ports=($N8N_WEB_PORT $DIFY_WEB_PORT $ONEAPI_WEB_PORT $RAGFLOW_WEB_PORT $MYSQL_PORT $POSTGRES_PORT $REDIS_PORT $DIFY_API_PORT $RAGFLOW_API_PORT $ELASTICSEARCH_PORT $MINIO_API_PORT $MINIO_CONSOLE_PORT)
         local unique_ports=($(printf "%s\n" "${ports[@]}" | sort -u))
 
         if [ ${#ports[@]} -ne ${#unique_ports[@]} ]; then
@@ -136,6 +154,7 @@ save_config() {
 DIFY_DOMAIN="$DIFY_DOMAIN"
 N8N_DOMAIN="$N8N_DOMAIN"
 ONEAPI_DOMAIN="$ONEAPI_DOMAIN"
+RAGFLOW_DOMAIN="$RAGFLOW_DOMAIN"
 DOMAIN_PORT="$DOMAIN_PORT"
 
 # 基础配置
@@ -147,15 +166,25 @@ CONTAINER_PREFIX="$CONTAINER_PREFIX"
 N8N_WEB_PORT=$N8N_WEB_PORT
 DIFY_WEB_PORT=$DIFY_WEB_PORT
 ONEAPI_WEB_PORT=$ONEAPI_WEB_PORT
+RAGFLOW_WEB_PORT=$RAGFLOW_WEB_PORT
 MYSQL_PORT=$MYSQL_PORT
 POSTGRES_PORT=$POSTGRES_PORT
 REDIS_PORT=$REDIS_PORT
 NGINX_PORT=$NGINX_PORT
 DIFY_API_PORT=$DIFY_API_PORT
+RAGFLOW_API_PORT=$RAGFLOW_API_PORT
+ELASTICSEARCH_PORT=$ELASTICSEARCH_PORT
+MINIO_API_PORT=$MINIO_API_PORT
+MINIO_CONSOLE_PORT=$MINIO_CONSOLE_PORT
 
 # 数据库配置
 DB_PASSWORD="$DB_PASSWORD"
 REDIS_PASSWORD="$REDIS_PASSWORD"
+
+# RAGFlow配置
+RAGFLOW_SECRET_KEY="$RAGFLOW_SECRET_KEY"
+MINIO_ACCESS_KEY="$MINIO_ACCESS_KEY"
+MINIO_SECRET_KEY="$MINIO_SECRET_KEY"
 
 # 运行模式
 USE_DOMAIN=$USE_DOMAIN
@@ -164,6 +193,7 @@ USE_DOMAIN=$USE_DOMAIN
 DIFY_URL="$DIFY_URL"
 N8N_URL="$N8N_URL"
 ONEAPI_URL="$ONEAPI_URL"
+RAGFLOW_URL="$RAGFLOW_URL"
 EOF
 
     success "配置已保存到: $config_file"

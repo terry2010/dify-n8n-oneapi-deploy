@@ -33,6 +33,7 @@ show_help() {
     echo "  -l, --list       列出可备份的系统"
     echo "  -a, --all        备份所有系统数据（默认）"
     echo "  -c, --compress   压缩备份文件"
+    echo "  --exclude <path> 排除指定路径（可多次使用）"
     echo ""
     echo "系统名称:"
     echo "  mysql           备份MySQL数据库"
@@ -41,6 +42,7 @@ show_help() {
     echo "  dify            备份Dify系统数据"
     echo "  n8n             备份n8n系统数据"
     echo "  oneapi          备份OneAPI系统数据"
+    echo "  ragflow         备份RAGFlow系统数据"
     echo "  config          备份配置文件"
     echo ""
     echo "示例:"
@@ -48,13 +50,15 @@ show_help() {
     echo "  $0 mysql              # 只备份MySQL数据库"
     echo "  $0 dify n8n           # 备份Dify和n8n系统"
     echo "  $0 -c mysql           # 备份MySQL并压缩"
+    echo "  $0 ragflow            # 备份RAGFlow系统"
+    echo "  $0 --exclude logs     # 备份时排除日志目录"
 }
 
 # 检查Docker服务状态
 check_docker_services() {
     log "检查Docker服务状态..."
 
-    local services=("mysql" "postgres" "redis" "dify_api" "n8n" "oneapi")
+    local services=("mysql" "postgres" "redis" "dify_api" "n8n" "oneapi" "ragflow" "elasticsearch" "minio")
     local running_services=()
     local stopped_services=()
 
@@ -99,16 +103,18 @@ backup_mysql() {
     fi
 
     # 获取数据库密码
-    local db_password="${DB_PASSWORD}"
+    local db_*="${DB_*}"
 
     # 备份所有数据库
-    docker exec "$container_name" mysqldump -u root -p"${db_password}" --all-databases --single-transaction --routines --triggers > "${backup_dir}/mysql_all_databases.sql" 2>/dev/null
+    docker exec "$container_name" mysqldump -u root -p"${db_*}" --all-databases --single-transaction --routines --triggers > "${backup_dir}/mysql_all_databases.sql" 2>/dev/null
 
     if [ $? -eq 0 ] && [ -s "${backup_dir}/mysql_all_databases.sql" ]; then
         success "MySQL数据库备份完成: ${backup_dir}/mysql_all_databases.sql"
         echo "备份时间: $(date)" > "${backup_dir}/backup_info.txt"
         echo "备份类型: MySQL数据库" >> "${backup_dir}/backup_info.txt"
         echo "备份大小: $(du -sh "${backup_dir}/mysql_all_databases.sql" | cut -f1)" >> "${backup_dir}/backup_info.txt"
+        echo "数据库列表:" >> "${backup_dir}/backup_info.txt"
+        docker exec "$container_name" mysql -u root -p"${db_*}" -e "SHOW DATABASES;" 2>/dev/null | grep -v "Database\|information_schema\|performance_schema\|mysql\|sys" >> "${backup_dir}/backup_info.txt" 2>/dev/null
         return 0
     else
         error "MySQL数据库备份失败"
@@ -130,16 +136,18 @@ backup_postgres() {
     fi
 
     # 获取数据库密码
-    local db_password="${DB_PASSWORD}"
+    local db_*="${DB_*}"
 
     # 备份所有数据库
-    docker exec -e PGPASSWORD="$db_password" "$container_name" pg_dumpall -U postgres > "${backup_dir}/postgres_all_databases.sql" 2>/dev/null
+    docker exec -e PG*="$db_*" "$container_name" pg_dumpall -U postgres > "${backup_dir}/postgres_all_databases.sql" 2>/dev/null
 
     if [ $? -eq 0 ] && [ -s "${backup_dir}/postgres_all_databases.sql" ]; then
         success "PostgreSQL数据库备份完成: ${backup_dir}/postgres_all_databases.sql"
         echo "备份时间: $(date)" > "${backup_dir}/backup_info.txt"
         echo "备份类型: PostgreSQL数据库" >> "${backup_dir}/backup_info.txt"
         echo "备份大小: $(du -sh "${backup_dir}/postgres_all_databases.sql" | cut -f1)" >> "${backup_dir}/backup_info.txt"
+        echo "数据库列表:" >> "${backup_dir}/backup_info.txt"
+        docker exec -e PG*="$db_*" "$container_name" psql -U postgres -c "\l" 2>/dev/null | grep -v "List of databases\|template\|postgres" | awk '{print $1}' | grep -v "^$\|^-\|Name" >> "${backup_dir}/backup_info.txt" 2>/dev/null
         return 0
     else
         error "PostgreSQL数据库备份失败"
@@ -182,11 +190,16 @@ backup_redis() {
     # 复制Redis数据文件
     docker cp "${container_name}:/data/dump.rdb" "${backup_dir}/redis_dump.rdb" 2>/dev/null
 
+    # 备份Redis配置信息
+    docker exec "$container_name" redis-cli INFO all > "${backup_dir}/redis_info.txt" 2>/dev/null
+    docker exec "$container_name" redis-cli CONFIG GET "*" > "${backup_dir}/redis_config.txt" 2>/dev/null
+
     if [ $? -eq 0 ] && [ -f "${backup_dir}/redis_dump.rdb" ]; then
         success "Redis数据备份完成: ${backup_dir}/redis_dump.rdb"
         echo "备份时间: $(date)" > "${backup_dir}/backup_info.txt"
         echo "备份类型: Redis数据" >> "${backup_dir}/backup_info.txt"
         echo "备份大小: $(du -sh "${backup_dir}/redis_dump.rdb" | cut -f1)" >> "${backup_dir}/backup_info.txt"
+        echo "Redis版本: $(docker exec "$container_name" redis-cli INFO server | grep redis_version | cut -d: -f2 | tr -d '\r')" >> "${backup_dir}/backup_info.txt" 2>/dev/null
         return 0
     else
         error "Redis数据备份失败"
@@ -233,6 +246,8 @@ backup_dify() {
         echo "备份时间: $(date)" > "${backup_dir}/backup_info.txt"
         echo "备份类型: Dify系统数据" >> "${backup_dir}/backup_info.txt"
         echo "备份大小: $(du -sh "$backup_dir" | cut -f1)" >> "${backup_dir}/backup_info.txt"
+        echo "备份内容:" >> "${backup_dir}/backup_info.txt"
+        find "$backup_dir" -type d -name "*" | sed "s|$backup_dir/||" | grep -v "^$" >> "${backup_dir}/backup_info.txt"
         success "Dify系统数据备份完成: $backup_dir"
         return 0
     else
@@ -255,6 +270,14 @@ backup_n8n() {
             echo "备份时间: $(date)" > "${backup_dir}/backup_info.txt"
             echo "备份类型: n8n系统数据" >> "${backup_dir}/backup_info.txt"
             echo "备份大小: $(du -sh "$backup_dir" | cut -f1)" >> "${backup_dir}/backup_info.txt"
+
+            # 统计工作流数量
+            local workflow_count=0
+            if [ -f "$backup_dir/n8n/data/database.sqlite" ]; then
+                workflow_count=$(docker exec "${CONTAINER_PREFIX}_n8n" sqlite3 /home/node/.n8n/database.sqlite "SELECT COUNT(*) FROM workflow_entity;" 2>/dev/null || echo "0")
+            fi
+            echo "工作流数量: $workflow_count" >> "${backup_dir}/backup_info.txt"
+
             success "n8n系统数据备份完成: $backup_dir"
             return 0
         fi
@@ -286,6 +309,112 @@ backup_oneapi() {
     error "OneAPI系统数据备份失败"
     rm -rf "$backup_dir" 2>/dev/null
     return 1
+}
+
+# 备份RAGFlow系统数据
+backup_ragflow() {
+    log "开始备份RAGFlow系统数据..."
+
+    local backup_dir=$(create_backup_dir "ragflow")
+    local backed_up=false
+
+    # 备份RAGFlow应用数据
+    if [ -d "$INSTALL_PATH/volumes/ragflow/ragflow" ]; then
+        log "备份RAGFlow应用数据..."
+        cp -r "$INSTALL_PATH/volumes/ragflow/ragflow" "$backup_dir/" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            success "RAGFlow应用数据备份完成"
+            backed_up=true
+        fi
+    fi
+
+    # 备份Elasticsearch数据
+    if [ -d "$INSTALL_PATH/volumes/ragflow/elasticsearch" ]; then
+        log "备份Elasticsearch数据..."
+        # 先创建Elasticsearch快照（如果服务在运行）
+        if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_elasticsearch"; then
+            log "创建Elasticsearch快照..."
+            docker exec "${CONTAINER_PREFIX}_elasticsearch" curl -X PUT "localhost:9200/_snapshot/backup_repo" -H 'Content-Type: application/json' -d'
+            {
+              "type": "fs",
+              "settings": {
+                "location": "/usr/share/elasticsearch/data/backup"
+              }
+            }' >/dev/null 2>&1
+
+            docker exec "${CONTAINER_PREFIX}_elasticsearch" curl -X PUT "localhost:9200/_snapshot/backup_repo/snapshot_${TIMESTAMP}" -H 'Content-Type: application/json' -d'
+            {
+              "indices": "*",
+              "ignore_unavailable": true,
+              "include_global_state": false
+            }' >/dev/null 2>&1
+
+            # 等待快照完成
+            sleep 10
+        fi
+
+        cp -r "$INSTALL_PATH/volumes/ragflow/elasticsearch" "$backup_dir/" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            success "Elasticsearch数据备份完成"
+            backed_up=true
+        fi
+    fi
+
+    # 备份MinIO数据
+    if [ -d "$INSTALL_PATH/volumes/ragflow/minio" ]; then
+        log "备份MinIO数据..."
+        cp -r "$INSTALL_PATH/volumes/ragflow/minio" "$backup_dir/" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            success "MinIO数据备份完成"
+            backed_up=true
+        fi
+    fi
+
+    # 备份模型缓存
+    if [ -d "$INSTALL_PATH/volumes/ragflow/huggingface" ]; then
+        log "备份模型缓存（可能需要较长时间）..."
+        cp -r "$INSTALL_PATH/volumes/ragflow/huggingface" "$backup_dir/" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            success "模型缓存备份完成"
+            backed_up=true
+        fi
+    fi
+
+    # 备份NLTK数据
+    if [ -d "$INSTALL_PATH/volumes/ragflow/nltk_data" ]; then
+        log "备份NLTK数据..."
+        cp -r "$INSTALL_PATH/volumes/ragflow/nltk_data" "$backup_dir/" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            success "NLTK数据备份完成"
+            backed_up=true
+        fi
+    fi
+
+    if [ "$backed_up" = true ]; then
+        echo "备份时间: $(date)" > "${backup_dir}/backup_info.txt"
+        echo "备份类型: RAGFlow系统数据" >> "${backup_dir}/backup_info.txt"
+        echo "备份大小: $(du -sh "$backup_dir" | cut -f1)" >> "${backup_dir}/backup_info.txt"
+        echo "备份内容:" >> "${backup_dir}/backup_info.txt"
+        echo "- RAGFlow应用数据" >> "${backup_dir}/backup_info.txt"
+        echo "- Elasticsearch索引数据" >> "${backup_dir}/backup_info.txt"
+        echo "- MinIO对象存储数据" >> "${backup_dir}/backup_info.txt"
+        echo "- 机器学习模型缓存" >> "${backup_dir}/backup_info.txt"
+        echo "- NLTK自然语言处理数据" >> "${backup_dir}/backup_info.txt"
+
+        # 获取RAGFlow版本信息
+        if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_ragflow"; then
+            local ragflow_version=$(docker exec "${CONTAINER_PREFIX}_ragflow" cat /ragflow/VERSION 2>/dev/null || echo "未知")
+            echo "RAGFlow版本: $ragflow_version" >> "${backup_dir}/backup_info.txt"
+        fi
+
+        success "RAGFlow系统数据备份完成: $backup_dir"
+        warning "注意: RAGFlow备份文件可能较大，包含模型缓存数据"
+        return 0
+    else
+        error "RAGFlow系统数据备份失败"
+        rm -rf "$backup_dir" 2>/dev/null
+        return 1
+    fi
 }
 
 # 备份配置文件
@@ -332,10 +461,17 @@ backup_config() {
         fi
     fi
 
+    # 备份环境变量文件
+    if [ -f ".env" ]; then
+        cp ".env" "$backup_dir/" 2>/dev/null
+    fi
+
     if [ "$backed_up" = true ]; then
         echo "备份时间: $(date)" > "${backup_dir}/backup_info.txt"
         echo "备份类型: 配置文件" >> "${backup_dir}/backup_info.txt"
         echo "备份大小: $(du -sh "$backup_dir" | cut -f1)" >> "${backup_dir}/backup_info.txt"
+        echo "备份内容:" >> "${backup_dir}/backup_info.txt"
+        find "$backup_dir" -name "*.yml" -o -name "*.conf" -o -name "*.sh" | sed "s|$backup_dir/||" >> "${backup_dir}/backup_info.txt"
         success "配置文件备份完成: $backup_dir"
         return 0
     else
@@ -351,7 +487,9 @@ backup_all() {
 
     local backup_dir=$(create_backup_dir "full_backup")
     local success_count=0
-    local total_count=7
+    local total_count=8
+
+    echo -e "\n${BLUE}=== 开始完整备份，这可能需要较长时间... ===${NC}"
 
     # 备份各个组件到子目录
     log "备份MySQL数据库..."
@@ -371,6 +509,9 @@ backup_all() {
 
     log "备份OneAPI系统数据..."
     backup_oneapi_to_dir "${backup_dir}/oneapi" && ((success_count++))
+
+    log "备份RAGFlow系统数据..."
+    backup_ragflow_to_dir "${backup_dir}/ragflow" && ((success_count++))
 
     log "备份配置文件..."
     backup_config_to_dir "${backup_dir}/config" && ((success_count++))
@@ -392,6 +533,7 @@ AI服务集群完整备份报告
 - Dify系统数据
 - n8n系统数据
 - OneAPI系统数据
+- RAGFlow系统数据
 - 配置文件和脚本
 
 系统配置:
@@ -400,8 +542,16 @@ AI服务集群完整备份报告
 - 容器前缀: ${CONTAINER_PREFIX}
 - 使用模式: $([ "$USE_DOMAIN" = true ] && echo "域名模式" || echo "IP模式")
 
+备份统计:
+$(du -sh "${backup_dir}"/* 2>/dev/null | sort -hr)
+
 恢复说明:
 使用 scripts/restore.sh 脚本恢复备份数据
+
+注意事项:
+- RAGFlow备份包含大量模型缓存，文件较大
+- 首次恢复RAGFlow可能需要重新下载部分模型
+- 建议定期备份，保留多个版本
 SUMMARY_EOF
 
     success "完整系统备份完成: $backup_dir"
@@ -416,10 +566,10 @@ backup_mysql_to_dir() {
     mkdir -p "$target_dir"
 
     local container_name="${CONTAINER_PREFIX}_mysql"
-    local db_password="${DB_PASSWORD}"
+    local db_*="${DB_*}"
 
     if docker ps --format "{{.Names}}" | grep -q "^${container_name}$"; then
-        docker exec "$container_name" mysqldump -u root -p"${db_password}" --all-databases --single-transaction --routines --triggers > "${target_dir}/mysql_all_databases.sql" 2>/dev/null
+        docker exec "$container_name" mysqldump -u root -p"${db_*}" --all-databases --single-transaction --routines --triggers > "${target_dir}/mysql_all_databases.sql" 2>/dev/null
         return $?
     else
         return 1
@@ -431,10 +581,10 @@ backup_postgres_to_dir() {
     mkdir -p "$target_dir"
 
     local container_name="${CONTAINER_PREFIX}_postgres"
-    local db_password="${DB_PASSWORD}"
+    local db_*="${DB_*}"
 
     if docker ps --format "{{.Names}}" | grep -q "^${container_name}$"; then
-        docker exec -e PGPASSWORD="$db_password" "$container_name" pg_dumpall -U postgres > "${target_dir}/postgres_all_databases.sql" 2>/dev/null
+        docker exec -e PG*="$db_*" "$container_name" pg_dumpall -U postgres > "${target_dir}/postgres_all_databases.sql" 2>/dev/null
         return $?
     else
         return 1
@@ -485,6 +635,39 @@ backup_oneapi_to_dir() {
     return $?
 }
 
+backup_ragflow_to_dir() {
+    local target_dir="$1"
+    mkdir -p "$target_dir"
+
+    local success=false
+
+    # 备份RAGFlow数据（排除大型缓存文件）
+    if [ -d "$INSTALL_PATH/volumes/ragflow/ragflow" ]; then
+        cp -r "$INSTALL_PATH/volumes/ragflow/ragflow" "$target_dir/" 2>/dev/null && success=true
+    fi
+
+    # 备份Elasticsearch数据
+    if [ -d "$INSTALL_PATH/volumes/ragflow/elasticsearch" ]; then
+        cp -r "$INSTALL_PATH/volumes/ragflow/elasticsearch" "$target_dir/" 2>/dev/null && success=true
+    fi
+
+    # 备份MinIO数据
+    if [ -d "$INSTALL_PATH/volumes/ragflow/minio" ]; then
+        cp -r "$INSTALL_PATH/volumes/ragflow/minio" "$target_dir/" 2>/dev/null && success=true
+    fi
+
+    # 可选择性备份大型缓存（默认备份，但用户可以排除）
+    if [ -d "$INSTALL_PATH/volumes/ragflow/huggingface" ] && [[ ! " ${EXCLUDE_PATHS[@]} " =~ " huggingface " ]]; then
+        cp -r "$INSTALL_PATH/volumes/ragflow/huggingface" "$target_dir/" 2>/dev/null && success=true
+    fi
+
+    if [ -d "$INSTALL_PATH/volumes/ragflow/nltk_data" ]; then
+        cp -r "$INSTALL_PATH/volumes/ragflow/nltk_data" "$target_dir/" 2>/dev/null && success=true
+    fi
+
+    [ "$success" = true ] && return 0 || return 1
+}
+
 backup_config_to_dir() {
     local target_dir="$1"
     mkdir -p "$target_dir"
@@ -516,6 +699,8 @@ compress_backup() {
     local parent_dir=$(dirname "$backup_dir")
 
     cd "$parent_dir"
+
+    # 使用更好的压缩算法
     tar -czf "${backup_name}.tar.gz" "$backup_name" 2>/dev/null
 
     if [ $? -eq 0 ]; then
@@ -552,8 +737,28 @@ list_systems() {
     echo "  dify       - Dify系统数据"
     echo "  n8n        - n8n系统数据"
     echo "  oneapi     - OneAPI系统数据"
+    echo "  ragflow    - RAGFlow系统数据（包含大型模型缓存）"
     echo "  config     - 配置文件"
     echo "  all        - 所有系统（默认）"
+}
+
+# 显示备份统计
+show_backup_statistics() {
+    if [ ! -d "$BACKUP_BASE_DIR" ]; then
+        warning "备份目录不存在"
+        return
+    fi
+
+    echo -e "\n${BLUE}=== 备份统计信息 ===${NC}"
+
+    local total_backups=$(find "$BACKUP_BASE_DIR" -maxdepth 1 \( -type d -name "*_*" -o -name "*.tar.gz" \) | wc -l)
+    echo "备份总数: $total_backups"
+
+    local total_size=$(du -sh "$BACKUP_BASE_DIR" 2>/dev/null | cut -f1)
+    echo "总占用空间: $total_size"
+
+    echo -e "\n最近的备份:"
+    find "$BACKUP_BASE_DIR" -maxdepth 1 \( -type d -name "*_*" -o -name "*.tar.gz" \) -exec ls -lah {} \; 2>/dev/null | head -10
 }
 
 # 主函数
@@ -564,6 +769,8 @@ main() {
 
     local compress_flag=false
     local systems=()
+    local exclude_paths=()
+    EXCLUDE_PATHS=()
 
     # 解析参数
     while [[ $# -gt 0 ]]; do
@@ -584,6 +791,11 @@ main() {
                 compress_flag=true
                 shift
                 ;;
+            --exclude)
+                exclude_paths+=("$2")
+                EXCLUDE_PATHS+=("$2")
+                shift 2
+                ;;
             *)
                 systems+=("$1")
                 shift
@@ -599,8 +811,13 @@ main() {
     # 检查Docker服务状态
     check_docker_services
 
+    # 显示备份统计
+    show_backup_statistics
+
     # 执行备份
     local backup_results=()
+    local backup_paths=()
+
     for system in "${systems[@]}"; do
         case "$system" in
             mysql)
@@ -645,6 +862,13 @@ main() {
                     backup_results+=("oneapi:失败")
                 fi
                 ;;
+            ragflow)
+                if backup_ragflow; then
+                    backup_results+=("ragflow:成功")
+                else
+                    backup_results+=("ragflow:失败")
+                fi
+                ;;
             config)
                 if backup_config; then
                     backup_results+=("config:成功")
@@ -662,6 +886,14 @@ main() {
                 ;;
         esac
     done
+
+    # 压缩备份文件（如果需要）
+    if [ "$compress_flag" = true ] && [ "$system" != "all" ]; then
+        local latest_backup=$(find "$BACKUP_BASE_DIR" -maxdepth 1 -type d -name "*_${TIMESTAMP}" 2>/dev/null | head -1)
+        if [ -n "$latest_backup" ]; then
+            compress_backup "$latest_backup"
+        fi
+    fi
 
     # 清理旧备份
     cleanup_old_backups
@@ -684,6 +916,17 @@ main() {
 
     success "备份操作完成"
     echo "备份文件位置: $BACKUP_BASE_DIR"
+
+    # 显示最终备份统计
+    echo -e "\n${BLUE}=== 最新备份统计 ===${NC}"
+    if [ -d "$BACKUP_BASE_DIR" ]; then
+        local newest_backup=$(find "$BACKUP_BASE_DIR" -maxdepth 1 \( -type d -name "*_${TIMESTAMP}" -o -name "*_${TIMESTAMP}.tar.gz" \) | head -1)
+        if [ -n "$newest_backup" ]; then
+            echo "最新备份: $(basename "$newest_backup")"
+            echo "备份大小: $(du -sh "$newest_backup" | cut -f1)"
+            echo "备份时间: $(date)"
+        fi
+    fi
 }
 
 # 运行主函数

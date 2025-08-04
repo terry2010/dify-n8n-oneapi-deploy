@@ -74,6 +74,14 @@ http {
         server oneapi:3000;
     }
 
+    upstream ragflow_upstream {
+        server ragflow:80;
+    }
+
+    upstream ragflow_api_upstream {
+        server ragflow:9380;
+    }
+
     # Dify服务器配置
     server {
         listen 80;
@@ -162,6 +170,68 @@ http {
         }
     }
 
+    # RAGFlow服务器配置
+    server {
+        listen 80;
+        server_name ${RAGFLOW_DOMAIN};
+
+        # API路径代理
+        location /api/ {
+            proxy_pass http://ragflow_api_upstream/api/;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 300;
+            proxy_connect_timeout 300;
+            proxy_send_timeout 300;
+            add_header Access-Control-Allow-Origin * always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With" always;
+
+            if (\$request_method = 'OPTIONS') {
+                add_header Access-Control-Allow-Origin * always;
+                add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+                add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With" always;
+                return 204;
+            }
+        }
+
+        # 健康检查
+        location /health {
+            proxy_pass http://ragflow_upstream/health;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+        }
+
+        # WebSocket支持
+        location /ws/ {
+            proxy_pass http://ragflow_upstream/ws/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 86400;
+        }
+
+        # 静态资源和主页面
+        location / {
+            proxy_pass http://ragflow_upstream;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 300;
+            proxy_connect_timeout 300;
+            proxy_send_timeout 300;
+        }
+    }
+
     # 默认服务器
     server {
         listen 80 default_server;
@@ -182,6 +252,7 @@ http {
         .service p { color: #666; margin: 10px 0; }
         .service a { display: inline-block; margin: 5px 10px 5px 0; padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }
         .service a:hover { background: #0056b3; }
+        .new { border-color: #28a745; background: #f8fff9; }
     </style>
 </head>
 <body>
@@ -198,6 +269,10 @@ http {
         <div class="service">
             <h3>🔑 OneAPI 接口管理</h3>
             <p>访问地址: <a href="${ONEAPI_URL}" target="_blank">${ONEAPI_DOMAIN}$([ -n "$DOMAIN_PORT" ] && [ "$DOMAIN_PORT" != "80" ] && echo ":$DOMAIN_PORT")</a></p>
+        </div>
+        <div class="service new">
+            <h3>📚 RAGFlow 文档理解RAG引擎</h3>
+            <p>访问地址: <a href="${RAGFLOW_URL}" target="_blank">${RAGFLOW_DOMAIN}$([ -n "$DOMAIN_PORT" ] && [ "$DOMAIN_PORT" != "80" ] && echo ":$DOMAIN_PORT")</a></p>
         </div>
     </div>
 </body>
@@ -250,6 +325,14 @@ http {
         server oneapi:3000;
     }
 
+    upstream ragflow_upstream {
+        server ragflow:80;
+    }
+
+    upstream ragflow_api_upstream {
+        server ragflow:9380;
+    }
+
     server {
         listen 80 default_server;
         server_name _;
@@ -272,6 +355,7 @@ http {
         .service a.direct { background: #28a745; }
         .service a.direct:hover { background: #1e7e34; }
         .info { background: #f8f9fa; padding: 20px; margin-top: 30px; border-radius: 8px; }
+        .new { border-color: #28a745; background: #f8fff9; }
     </style>
 </head>
 <body>
@@ -299,6 +383,13 @@ http {
             <a href="#" onclick="openDirect(8603)" class="direct">直接访问</a>
         </div>
 
+        <div class="service new">
+            <h3>📚 RAGFlow 文档理解RAG引擎</h3>
+            <p>基于深度文档理解的RAG引擎，支持PDF、Word等多种文档格式</p>
+            <a href="/ragflow/">代理访问</a>
+            <a href="#" onclick="openDirect(8605)" class="direct">直接访问</a>
+        </div>
+
         <div class="info">
             <h4>📊 服务信息：</h4>
             <p>数据库连接信息：</p>
@@ -306,6 +397,8 @@ http {
                 <li>MySQL: <span id="host">loading...</span>:3306 (用户: root, 密码: 654321)</li>
                 <li>PostgreSQL: <span id="host2">loading...</span>:5433 (用户: postgres, 密码: 654321)</li>
                 <li>Redis: <span id="host3">loading...</span>:6379</li>
+                <li>Elasticsearch: <span id="host4">loading...</span>:9200</li>
+                <li>MinIO: <span id="host5">loading...</span>:9002 (控制台)</li>
             </ul>
         </div>
     </div>
@@ -315,6 +408,8 @@ http {
         document.getElementById("host").textContent = hostname;
         document.getElementById("host2").textContent = hostname;
         document.getElementById("host3").textContent = hostname;
+        document.getElementById("host4").textContent = hostname;
+        document.getElementById("host5").textContent = hostname;
 
         function openDirect(port) {
             window.open("http://" + hostname + ":" + port, "_blank");
@@ -359,6 +454,20 @@ http {
         }
 
         location /api/ {
+            # 优先匹配RAGFlow API
+            if ($request_uri ~* "^/api/v1/dataset|^/api/v1/chat|^/api/v1/retrieval") {
+                proxy_pass http://ragflow_api_upstream;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_read_timeout 300;
+                proxy_connect_timeout 300;
+                proxy_send_timeout 300;
+                break;
+            }
+
+            # 默认路由到Dify API
             proxy_pass http://dify_api_upstream/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -412,6 +521,67 @@ http {
         location /oneapi {
             return 301 /oneapi/;
         }
+
+        # RAGFlow服务代理
+        location /ragflow/ {
+            rewrite ^/ragflow/(.*) /$1 break;
+            proxy_pass http://ragflow_upstream;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 300;
+            proxy_connect_timeout 300;
+            proxy_send_timeout 300;
+        }
+
+        location /ragflow {
+            return 301 /ragflow/;
+        }
+
+        # RAGFlow API代理 (专用路径)
+        location /ragflow/api/ {
+            rewrite ^/ragflow/api/(.*) /api/$1 break;
+            proxy_pass http://ragflow_api_upstream;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 300;
+            proxy_connect_timeout 300;
+            proxy_send_timeout 300;
+            add_header Access-Control-Allow-Origin * always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With" always;
+
+            if ($request_method = 'OPTIONS') {
+                add_header Access-Control-Allow-Origin * always;
+                add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+                add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With" always;
+                return 204;
+            }
+        }
+
+        # RAGFlow WebSocket支持
+        location /ragflow/ws/ {
+            rewrite ^/ragflow/ws/(.*) /ws/$1 break;
+            proxy_pass http://ragflow_upstream;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 86400;
+        }
+
+        # 健康检查端点
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
     }
 }
 EOF
@@ -441,6 +611,11 @@ services:
       - ./logs:/var/log/nginx
     networks:
       - aiserver_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 EOF
 
     success "Nginx Docker Compose配置生成完成"
@@ -484,5 +659,132 @@ reload_nginx_config() {
     else
         warning "Nginx服务未运行"
         return 1
+    fi
+}
+
+# 测试Nginx配置
+test_nginx_config() {
+    log "测试Nginx配置..."
+
+    if [ -f "$INSTALL_PATH/config/nginx.conf" ]; then
+        # 使用临时容器测试配置
+        docker run --rm -v "$INSTALL_PATH/config/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:latest nginx -t
+        if [ $? -eq 0 ]; then
+            success "Nginx配置测试通过"
+            return 0
+        else
+            error "Nginx配置测试失败"
+            return 1
+        fi
+    else
+        error "Nginx配置文件不存在"
+        return 1
+    fi
+}
+
+# 生成SSL证书配置（预留功能）
+generate_ssl_config() {
+    log "生成SSL证书配置..."
+
+    # 这是一个预留功能，用于将来支持HTTPS
+    warning "SSL证书配置功能正在开发中"
+
+    # 创建证书目录
+    ensure_directory "$INSTALL_PATH/volumes/nginx/ssl" "root:root" "755"
+
+    success "SSL配置目录已创建"
+}
+
+# 备份Nginx配置
+backup_nginx_config() {
+    local backup_dir="$1"
+
+    log "备份Nginx配置..."
+
+    mkdir -p "$backup_dir"
+
+    # 备份配置文件
+    if [ -f "$INSTALL_PATH/config/nginx.conf" ]; then
+        cp "$INSTALL_PATH/config/nginx.conf" "$backup_dir/" 2>/dev/null
+        success "Nginx配置文件备份完成"
+    fi
+
+    # 备份日志文件
+    if [ -d "$INSTALL_PATH/logs" ]; then
+        cp -r "$INSTALL_PATH/logs" "$backup_dir/" 2>/dev/null
+        success "Nginx日志备份完成"
+    fi
+}
+
+# 恢复Nginx配置
+restore_nginx_config() {
+    local backup_dir="$1"
+
+    log "恢复Nginx配置..."
+
+    # 恢复配置文件
+    if [ -f "$backup_dir/nginx.conf" ]; then
+        backup_file "$INSTALL_PATH/config/nginx.conf"
+        cp "$backup_dir/nginx.conf" "$INSTALL_PATH/config/" 2>/dev/null
+        success "Nginx配置文件恢复完成"
+    fi
+
+    # 重新加载配置
+    if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_nginx"; then
+        reload_nginx_config
+    fi
+}
+
+# 显示Nginx状态
+show_nginx_status() {
+    log "显示Nginx状态..."
+
+    echo -e "\n${BLUE}=== Nginx服务状态 ===${NC}"
+
+    if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_nginx"; then
+        local health_status=$(docker inspect --format='{{.State.Health.Status}}' "${CONTAINER_PREFIX}_nginx" 2>/dev/null || echo "no-health-check")
+        case "$health_status" in
+            healthy)
+                echo "✅ Nginx: 运行正常"
+                ;;
+            unhealthy)
+                echo "❌ Nginx: 运行异常"
+                ;;
+            starting)
+                echo "🔄 Nginx: 正在启动"
+                ;;
+            *)
+                echo "ℹ️  Nginx: 运行中（无健康检查）"
+                ;;
+        esac
+
+        # 显示端口信息
+        local port_info=$(docker port "${CONTAINER_PREFIX}_nginx" 80 2>/dev/null)
+        if [ -n "$port_info" ]; then
+            echo "🌐 监听端口: $port_info"
+        fi
+
+        # 显示配置文件路径
+        echo "📁 配置文件: $INSTALL_PATH/config/nginx.conf"
+        echo "📁 日志目录: $INSTALL_PATH/logs"
+
+    else
+        echo "❌ Nginx: 未运行"
+    fi
+
+    echo -e "\n${BLUE}=== 反向代理配置 ===${NC}"
+    if [ "$USE_DOMAIN" = true ]; then
+        echo "模式: 域名模式"
+        echo "Dify: ${DIFY_DOMAIN} -> dify_web:3000"
+        echo "n8n: ${N8N_DOMAIN} -> n8n:5678"
+        echo "OneAPI: ${ONEAPI_DOMAIN} -> oneapi:3000"
+        echo "RAGFlow: ${RAGFLOW_DOMAIN} -> ragflow:80"
+    else
+        echo "模式: IP模式"
+        echo "统一入口: http://${SERVER_IP}:${NGINX_PORT}"
+        echo "/dify/ -> dify_web:3000"
+        echo "/n8n/ -> n8n:5678"
+        echo "/oneapi/ -> oneapi:3000"
+        echo "/ragflow/ -> ragflow:80"
     fi
 }
