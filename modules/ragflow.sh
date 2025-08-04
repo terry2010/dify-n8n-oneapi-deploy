@@ -116,16 +116,16 @@ services:
       - TZ=Asia/Shanghai
       - SECRET_KEY=${RAGFLOW_SECRET_KEY}
       - MYSQL_PASSWORD=${DB_PASSWORD}
-      - MYSQL_HOST=mysql
+      - MYSQL_HOST=${CONTAINER_PREFIX}_mysql
       - MYSQL_PORT=3306
       - MYSQL_USER=root
       - MYSQL_DB=ragflow
-      - REDIS_HOST=redis
+      - REDIS_HOST=${CONTAINER_PREFIX}_redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - ES_HOST=elasticsearch
+      - ES_HOST=${CONTAINER_PREFIX}_elasticsearch
       - ES_PORT=9200
-      - MINIO_HOST=minio
+      - MINIO_HOST=${CONTAINER_PREFIX}_minio
       - MINIO_PORT=9000
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
@@ -171,12 +171,12 @@ start_ragflow_services() {
 
     # 先启动Elasticsearch
     log "启动Elasticsearch服务..."
-    docker-compose -f docker-compose-ragflow.yml up -d elasticsearch
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d --remove-orphans elasticsearch
     wait_for_service "elasticsearch" "curl -f http://localhost:9200/_cluster/health" 120
 
     # 启动MinIO
     log "启动MinIO服务..."
-    docker-compose -f docker-compose-ragflow.yml up -d minio
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d --remove-orphans minio
     wait_for_service "minio" "curl -f http://localhost:9000/minio/health/live" 60
 
     # 初始化MinIO存储桶
@@ -187,7 +187,7 @@ start_ragflow_services() {
 
     # 启动RAGFlow核心服务
     log "启动RAGFlow核心服务..."
-    docker-compose -f docker-compose-ragflow.yml up -d ragflow
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d --remove-orphans ragflow
     wait_for_service "ragflow" "curl -f http://localhost:80/health" 180
 
     success "RAGFlow服务启动完成"

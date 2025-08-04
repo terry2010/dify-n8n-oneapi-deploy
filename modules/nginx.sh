@@ -35,6 +35,12 @@ generate_nginx_config() {
 
 # 生成域名模式的Nginx配置
 generate_domain_nginx_config() {
+    # 定义服务名变量，使用容器前缀
+    local dify_api="${CONTAINER_PREFIX}_dify_api"
+    local dify_web="${CONTAINER_PREFIX}_dify_web"
+    local n8n="${CONTAINER_PREFIX}_n8n"
+    local oneapi="${CONTAINER_PREFIX}_oneapi"
+    local ragflow="${CONTAINER_PREFIX}_ragflow"
     cat > "$INSTALL_PATH/config/nginx.conf" << EOF
 events {
     worker_connections 1024;
@@ -286,6 +292,12 @@ EOF
 
 # 生成IP模式的Nginx配置
 generate_ip_nginx_config() {
+    # 定义服务名变量，使用容器前缀
+    local dify_api="${CONTAINER_PREFIX}_dify_api"
+    local dify_web="${CONTAINER_PREFIX}_dify_web"
+    local n8n="${CONTAINER_PREFIX}_n8n"
+    local oneapi="${CONTAINER_PREFIX}_oneapi"
+    local ragflow="${CONTAINER_PREFIX}_ragflow"
     cat > "$INSTALL_PATH/config/nginx.conf" << EOF
 events {
     worker_connections 1024;
