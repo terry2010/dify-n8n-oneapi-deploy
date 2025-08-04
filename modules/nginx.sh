@@ -631,7 +631,7 @@ start_nginx_service() {
     docker network create aiserver_network 2>/dev/null || true
 
     # 启动Nginx
-    docker-compose -f docker-compose-nginx.yml up -d nginx
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-nginx.yml up -d --remove-orphans nginx
 
     # 检查Nginx状态
     sleep 10

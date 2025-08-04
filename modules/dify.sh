@@ -164,7 +164,7 @@ start_dify_services() {
     cd "$INSTALL_PATH"
 
     # 先启动Sandbox
-    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d dify_sandbox --remove-orphans
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_sandbox
     wait_for_service "dify_sandbox" "curl -f http://localhost:8194/health" 60
 
     # 启动API和Worker
