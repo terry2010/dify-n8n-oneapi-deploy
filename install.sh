@@ -9,8 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # 加载模块
-source modules/config.sh
-source modules/utils.sh
+source "$SCRIPT_DIR/modules/config.sh"
+source "$SCRIPT_DIR/modules/utils.sh"
 
 # 显示帮助信息
 show_help() {
@@ -53,7 +53,7 @@ install_infrastructure() {
     create_directories
 
     # 安装数据库
-    source modules/database.sh
+    source "$SCRIPT_DIR/modules/database.sh"
     install_databases
 
     success "基础设施安装完成"
@@ -66,22 +66,22 @@ install_app() {
     case "$app_name" in
         dify)
             log "安装Dify系统..."
-            source modules/dify.sh
+            source "$SCRIPT_DIR/modules/dify.sh"
             install_dify
             ;;
         n8n)
             log "安装n8n系统..."
-            source modules/n8n.sh
+            source "$SCRIPT_DIR/modules/n8n.sh"
             install_n8n
             ;;
         oneapi)
             log "安装OneAPI系统..."
-            source modules/oneapi.sh
+            source "$SCRIPT_DIR/modules/oneapi.sh"
             install_oneapi
             ;;
         ragflow)
             log "安装RAGFlow系统..."
-            source modules/ragflow.sh
+            source "$SCRIPT_DIR/modules/ragflow.sh"
             install_ragflow
             ;;
         *)
@@ -114,7 +114,7 @@ install_all() {
     install_app "ragflow"
 
     # 配置Nginx
-    source modules/nginx.sh
+    source "$SCRIPT_DIR/modules/nginx.sh"
     configure_nginx
 
     # 启动所有服务
@@ -152,7 +152,7 @@ start_all_services() {
         wait_for_service "redis" "redis-cli ping" 30
 
         # 初始化数据库
-        source modules/database.sh
+        source "$SCRIPT_DIR/modules/database.sh"
         initialize_databases
     fi
 
@@ -195,7 +195,7 @@ start_all_services() {
         wait_for_service "minio" "curl -f http://localhost:9000/minio/health/live" 60
 
         # 初始化MinIO和数据库
-        source modules/ragflow.sh
+        source "$SCRIPT_DIR/modules/ragflow.sh"
         initialize_minio_buckets
         initialize_ragflow_database
 
