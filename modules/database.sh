@@ -29,7 +29,7 @@ version: '3.8'
 
 networks:
   aiserver_network:
-    driver: bridge
+    external: true
 
 services:
   # MySQL数据库

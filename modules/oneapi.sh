@@ -37,8 +37,8 @@ services:
     ports:
       - \"${ONEAPI_WEB_PORT}:3000\"")
     environment:
-      SQL_DSN: "postgres://postgres:${DB_PASSWORD}@postgres:5432/oneapi?sslmode=disable"
-      REDIS_CONN_STRING: "redis://redis:6379"
+      SQL_DSN: "postgres://postgres:${DB_PASSWORD}@${CONTAINER_PREFIX}_postgres:5432/oneapi?sslmode=disable"
+      REDIS_CONN_STRING: "redis://${CONTAINER_PREFIX}_redis:6379"
       SESSION_SECRET: "oneapi-session-secret-random123456"
       TZ: "Asia/Shanghai"
     volumes:

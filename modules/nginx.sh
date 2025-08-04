@@ -286,7 +286,7 @@ EOF
 
 # 生成IP模式的Nginx配置
 generate_ip_nginx_config() {
-    cat > "$INSTALL_PATH/config/nginx.conf" << 'EOF'
+    cat > "$INSTALL_PATH/config/nginx.conf" << EOF
 events {
     worker_connections 1024;
 }
