@@ -47,6 +47,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
     networks:
       - aiserver_network
 
@@ -95,7 +96,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 120s
     networks:
       - aiserver_network
 
@@ -143,6 +144,12 @@ services:
       - \"${DIFY_WEB_PORT}:3000\"")
     depends_on:
       - dify_api
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     networks:
       - aiserver_network
 EOF
@@ -162,11 +169,11 @@ start_dify_services() {
 
     # 启动API和Worker
     docker-compose -f docker-compose-dify.yml up -d dify_api dify_worker
-    wait_for_service "dify_api" "curl -f http://localhost:5001/health" 60
+    wait_for_service "dify_api" "curl -f http://localhost:5001/health" 120
 
     # 启动Web服务
     docker-compose -f docker-compose-dify.yml up -d dify_web
-    sleep 10
+    sleep 15
 
     success "Dify服务启动完成"
 }
