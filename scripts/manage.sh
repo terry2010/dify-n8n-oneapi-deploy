@@ -160,7 +160,7 @@ show_status() {
     docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "(NAMES|${CONTAINER_PREFIX})"
 
     echo -e "\n${BLUE}=== 服务健康检查 ===${NC}"
-    check_service_health "mysql" "mysqladmin ping -h localhost -u root -p${DB_*} --silent" 2>/dev/null || echo "❌ MySQL: 未运行或连接失败"
+    check_service_health "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 2>/dev/null || echo "❌ MySQL: 未运行或连接失败"
     check_service_health "postgres" "pg_isready -U postgres" 2>/dev/null || echo "❌ PostgreSQL: 未运行或连接失败"
     check_service_health "redis" "redis-cli ping" 2>/dev/null || echo "❌ Redis: 未运行或连接失败"
 
@@ -249,7 +249,7 @@ health_check() {
 
     # 检查数据库连接
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_mysql"; then
-        if docker exec "${CONTAINER_PREFIX}_mysql" mysqladmin ping -u root -p"${DB_*}" --silent 2>/dev/null; then
+        if docker exec "${CONTAINER_PREFIX}_mysql" mysqladmin ping -u root -p"${DB_PASSWORD}" --silent 2>/dev/null; then
             success "MySQL连接正常"
         else
             issues+=("MySQL连接失败")
@@ -363,7 +363,7 @@ start_database_services() {
 
         if [ "$wait_flag" = true ]; then
             log "等待数据库服务完全启动..."
-            wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_*} --silent" "$timeout"
+            wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" "$timeout"
             wait_for_service "postgres" "pg_isready -U postgres" "$timeout"
             wait_for_service "redis" "redis-cli ping" "$timeout"
         else

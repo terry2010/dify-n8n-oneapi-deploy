@@ -147,7 +147,7 @@ start_all_services() {
         sleep 45
 
         # 等待数据库服务完全启动
-        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_*} --silent" 60
+        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 60
         wait_for_service "postgres" "pg_isready -U postgres" 60
         wait_for_service "redis" "redis-cli ping" 30
 
@@ -221,7 +221,7 @@ check_services_status() {
     docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "(NAMES|${CONTAINER_PREFIX})"
 
     echo -e "\n${BLUE}=== 健康检查 ===${NC}"
-    check_service_health "mysql" "mysqladmin ping -h localhost -u root -p${DB_*} --silent" 2>/dev/null || echo "❌ MySQL: 未运行或连接失败"
+    check_service_health "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 2>/dev/null || echo "❌ MySQL: 未运行或连接失败"
     check_service_health "postgres" "pg_isready -U postgres" 2>/dev/null || echo "❌ PostgreSQL: 未运行或连接失败"
     check_service_health "redis" "redis-cli ping" 2>/dev/null || echo "❌ Redis: 未运行或连接失败"
 
@@ -290,8 +290,8 @@ show_access_info() {
     echo "  - 修改端口: ./scripts/change_port.sh"
     echo ""
     echo "🗄️  数据库信息:"
-    echo "  - MySQL: ${SERVER_IP}:${MYSQL_PORT} (root/${DB_*})"
-    echo "  - PostgreSQL: ${SERVER_IP}:${POSTGRES_PORT} (postgres/${DB_*})"
+    echo "  - MySQL: ${SERVER_IP}:${MYSQL_PORT} (root/${DB_PASSWORD})"
+    echo "  - PostgreSQL: ${SERVER_IP}:${POSTGRES_PORT} (postgres/${DB_PASSWORD})"
     echo "  - Redis: ${SERVER_IP}:${REDIS_PORT}"
     echo ""
     echo "📋 常用docker-compose命令（在 $INSTALL_PATH 目录下执行）:"
@@ -514,7 +514,7 @@ show_status() {
     docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "(NAMES|${CONTAINER_PREFIX})"
 
     echo -e "\n${BLUE}=== 服务健康检查 ===${NC}"
-    check_service_health "mysql" "mysqladmin ping -h localhost -u root -p${DB_*} --silent" 2>/dev/null || echo "❌ MySQL: 未运行或连接失败"
+    check_service_health "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 2>/dev/null || echo "❌ MySQL: 未运行或连接失败"
     check_service_health "postgres" "pg_isready -U postgres" 2>/dev/null || echo "❌ PostgreSQL: 未运行或连接失败"
     check_service_health "redis" "redis-cli ping" 2>/dev/null || echo "❌ Redis: 未运行或连接失败"
 
@@ -724,12 +724,12 @@ log "开始备份数据..."
 
 # 备份MySQL
 if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_mysql"; then
-    docker exec "${CONTAINER_PREFIX}_mysql" mysqldump -u root -p"${DB_*}" --all-databases > "${BACKUP_DIR}/mysql.sql"
+    docker exec "${CONTAINER_PREFIX}_mysql" mysqldump -u root -p"${DB_PASSWORD}" --all-databases > "${BACKUP_DIR}/mysql.sql"
 fi
 
 # 备份PostgreSQL
 if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres"; then
-    docker exec -e PGPASSWORD="${DB_*}" "${CONTAINER_PREFIX}_postgres" pg_dumpall -U postgres > "${BACKUP_DIR}/postgres.sql"
+    docker exec -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" pg_dumpall -U postgres > "${BACKUP_DIR}/postgres.sql"
 fi
 
 # 备份应用数据
@@ -761,13 +761,13 @@ echo "从 $BACKUP_DIR 恢复数据..."
 # 恢复MySQL
 if [ -f "${BACKUP_DIR}/mysql.sql" ]; then
     echo "恢复MySQL数据..."
-    docker exec -i "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" < "${BACKUP_DIR}/mysql.sql"
+    docker exec -i "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" < "${BACKUP_DIR}/mysql.sql"
 fi
 
 # 恢复PostgreSQL
 if [ -f "${BACKUP_DIR}/postgres.sql" ]; then
     echo "恢复PostgreSQL数据..."
-    docker exec -i -e PGPASSWORD="${DB_*}" "${CONTAINER_PREFIX}_postgres" psql -U postgres < "${BACKUP_DIR}/postgres.sql"
+    docker exec -i -e PGPASSWORD="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres < "${BACKUP_DIR}/postgres.sql"
 fi
 
 echo "恢复完成"

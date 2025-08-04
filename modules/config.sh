@@ -5,13 +5,13 @@
 # =========================================================
 
 # ========== 域名配置区域 - 请在此处自定义每个系统的独立域名 ==========
-DIFY_DOMAIN="dify.demodomain.com"        # Dify系统域名
-N8N_DOMAIN="n8n.demodomain.com"          # n8n系统域名
-ONEAPI_DOMAIN="oneapi.demodomain.com"    # OneAPI系统域名
-RAGFLOW_DOMAIN="ragflow.demodomain.com"  # RAGFlow系统域名
+DIFY_DOMAIN="dify.fuwz.net"        # Dify系统域名
+N8N_DOMAIN="n8n.fuwz.net"          # n8n系统域名
+ONEAPI_DOMAIN="oneapi.fuwz.net"    # OneAPI系统域名
+RAGFLOW_DOMAIN="ragflow.fuwz.net"  # RAGFlow系统域名
 
 # 域名模式下的端口配置（可选，留空则使用80端口）
-DOMAIN_PORT=""                           # 域名模式下的端口，如8080，留空则使用80
+DOMAIN_PORT="8611"                           # 域名模式下的端口，如8080，留空则使用80
 
 # 如果没有域名，可以设置为空字符串使用IP+端口访问
 # DIFY_DOMAIN=""
@@ -32,7 +32,7 @@ RAGFLOW_WEB_PORT=8605
 MYSQL_PORT=3306
 POSTGRES_PORT=5433
 REDIS_PORT=6379
-NGINX_PORT=80  # 默认Nginx端口，域名模式下可能被DOMAIN_PORT覆盖
+NGINX_PORT=8610  # 默认Nginx端口，域名模式下可能被DOMAIN_PORT覆盖
 DIFY_API_PORT=5002  # Dify API端口
 RAGFLOW_API_PORT=9380  # RAGFlow API端口
 

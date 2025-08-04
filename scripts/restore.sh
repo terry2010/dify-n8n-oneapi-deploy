@@ -311,7 +311,7 @@ start_services_after_restore() {
         sleep 45
 
         # 等待数据库服务完全启动
-        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_*} --silent" 60
+        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 60
         wait_for_service "postgres" "pg_isready -U postgres" 60
         wait_for_service "redis" "redis-cli ping" 30
 
@@ -418,11 +418,11 @@ restore_mysql() {
     # 确保MySQL服务运行
     if ! docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_mysql"; then
         docker-compose -f docker-compose-db.yml start mysql
-        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_*} --silent" 60
+        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 60
     fi
 
     # 恢复数据库
-    docker exec -i "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" < "$mysql_backup" 2>/dev/null
+    docker exec -i "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" < "$mysql_backup" 2>/dev/null
 
     if [ $? -eq 0 ]; then
         success "MySQL数据库恢复完成"
@@ -459,7 +459,7 @@ restore_postgres() {
     fi
 
     # 恢复数据库
-    docker exec -i -e PG*="${DB_*}" "${CONTAINER_PREFIX}_postgres" psql -U postgres < "$postgres_backup" 2>/dev/null
+    docker exec -i -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres < "$postgres_backup" 2>/dev/null
 
     if [ $? -eq 0 ]; then
         success "PostgreSQL数据库恢复完成"
@@ -940,7 +940,7 @@ restore_full_system() {
     sleep 45
 
     # 等待数据库启动
-    wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_*} --silent" 60
+    wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 60
     wait_for_service "postgres" "pg_isready -U postgres" 60
     wait_for_service "redis" "redis-cli ping" 30
 

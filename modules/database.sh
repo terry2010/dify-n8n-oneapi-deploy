@@ -38,19 +38,19 @@ services:
     container_name: ${CONTAINER_PREFIX}_mysql
     restart: always
     environment:
-      MYSQL_ROOT_*: "${DB_*}"
+      MYSQL_ROOT_PASSWORD: "${DB_PASSWORD}"
       MYSQL_DATABASE: dify
       MYSQL_USER: dify
-      MYSQL_*: "${DB_*}"
+      MYSQL_PASSWORD: "${DB_PASSWORD}"
     ports:
       - "${MYSQL_PORT}:3306"
     volumes:
       - ./volumes/mysql/data:/var/lib/mysql
       - ./volumes/mysql/logs:/var/log/mysql
       - ./volumes/mysql/conf:/etc/mysql/conf.d
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_* --sql_mode=STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password --sql_mode=STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_*}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD}"]
       timeout: 20s
       retries: 10
       interval: 10s
@@ -66,7 +66,7 @@ services:
     environment:
       POSTGRES_DB: dify
       POSTGRES_USER: postgres
-      POSTGRES_*: "${DB_*}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD}"
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "${POSTGRES_PORT}:5432"
@@ -149,7 +149,7 @@ start_database_services() {
     docker-compose -f docker-compose-db.yml up -d
 
     # 等待数据库服务启动
-    wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_*} --silent" 90
+    wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 90
     wait_for_service "postgres" "pg_isready -U postgres" 90
     wait_for_service "redis" "redis-cli ping" 60
 
@@ -219,12 +219,12 @@ create_application_databases() {
 
     # 创建RAGFlow数据库（MySQL）
     log "创建MySQL数据库..."
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} -e "CREATE DATABASE IF NOT EXISTS ragflow CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} -e "CREATE DATABASE IF NOT EXISTS ragflow CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
 
     # 创建备用数据库
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} -e "CREATE DATABASE IF NOT EXISTS oneapi_mysql CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} -e "CREATE DATABASE IF NOT EXISTS n8n_mysql CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} -e "CREATE DATABASE IF NOT EXISTS dify_mysql CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} -e "CREATE DATABASE IF NOT EXISTS oneapi_mysql CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} -e "CREATE DATABASE IF NOT EXISTS n8n_mysql CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} -e "CREATE DATABASE IF NOT EXISTS dify_mysql CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
 
     success "应用数据库创建完成"
 }
@@ -237,27 +237,27 @@ setup_database_permissions() {
     log "设置MySQL权限..."
 
     # 为dify创建用户
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} -e "CREATE USER IF NOT EXISTS 'dify'@'%' IDENTIFIED BY '${DB_*}';" 2>/dev/null
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} -e "GRANT ALL PRIVILEGES ON dify_mysql.* TO 'dify'@'%';" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} -e "CREATE USER IF NOT EXISTS 'dify'@'%' IDENTIFIED BY '${DB_PASSWORD}';" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} -e "GRANT ALL PRIVILEGES ON dify_mysql.* TO 'dify'@'%';" 2>/dev/null
 
     # 为ragflow创建用户
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} -e "CREATE USER IF NOT EXISTS 'ragflow'@'%' IDENTIFIED BY '${DB_*}';" 2>/dev/null
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} -e "GRANT ALL PRIVILEGES ON ragflow.* TO 'ragflow'@'%';" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} -e "CREATE USER IF NOT EXISTS 'ragflow'@'%' IDENTIFIED BY '${DB_PASSWORD}';" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} -e "GRANT ALL PRIVILEGES ON ragflow.* TO 'ragflow'@'%';" 2>/dev/null
 
     # 为oneapi创建用户
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} -e "CREATE USER IF NOT EXISTS 'oneapi'@'%' IDENTIFIED BY '${DB_*}';" 2>/dev/null
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} -e "GRANT ALL PRIVILEGES ON oneapi_mysql.* TO 'oneapi'@'%';" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} -e "CREATE USER IF NOT EXISTS 'oneapi'@'%' IDENTIFIED BY '${DB_PASSWORD}';" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} -e "GRANT ALL PRIVILEGES ON oneapi_mysql.* TO 'oneapi'@'%';" 2>/dev/null
 
     # 刷新权限
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} -e "FLUSH PRIVILEGES;" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} -e "FLUSH PRIVILEGES;" 2>/dev/null
 
     # PostgreSQL权限设置
     log "设置PostgreSQL权限..."
 
     # 为应用创建专用用户
-    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "DO \$\$ BEGIN CREATE USER dify_user WITH *='${DB_*}'; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'User already exists'; END \$\$;" 2>/dev/null
-    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "DO \$\$ BEGIN CREATE USER n8n_user WITH *='${DB_*}'; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'User already exists'; END \$\$;" 2>/dev/null
-    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "DO \$\$ BEGIN CREATE USER oneapi_user WITH *='${DB_*}'; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'User already exists'; END \$\$;" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "DO \$\$ BEGIN CREATE USER dify_user WITH *='${DB_PASSWORD}'; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'User already exists'; END \$\$;" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "DO \$\$ BEGIN CREATE USER n8n_user WITH *='${DB_PASSWORD}'; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'User already exists'; END \$\$;" 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "DO \$\$ BEGIN CREATE USER oneapi_user WITH *='${DB_PASSWORD}'; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'User already exists'; END \$\$;" 2>/dev/null
 
     # 授权
     docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE dify TO dify_user;" 2>/dev/null
@@ -426,7 +426,7 @@ EOF
 
     # 执行SQL脚本
     docker cp "/tmp/ragflow_schema.sql" "${CONTAINER_PREFIX}_mysql:/tmp/ragflow_schema.sql"
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} ragflow < /tmp/ragflow_schema.sql 2>/dev/null
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} ragflow < /tmp/ragflow_schema.sql 2>/dev/null
 
     # 清理临时文件
     rm -f "/tmp/ragflow_schema.sql"
@@ -453,7 +453,7 @@ check_application_schemas() {
     # 检查MySQL数据库
     local mysql_dbs=("ragflow" "dify_mysql" "oneapi_mysql" "n8n_mysql")
     for db in "${mysql_dbs[@]}"; do
-        local table_count=$(docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$db';" 2>/dev/null | tail -1 || echo "0")
+        local table_count=$(docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$db';" 2>/dev/null | tail -1 || echo "0")
         log "$db 数据库表数量: $table_count"
     done
 
@@ -465,7 +465,7 @@ create_database_indexes() {
     log "创建数据库索引..."
 
     # 为RAGFlow数据库创建额外索引
-    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_*} ragflow -e "
+    docker exec ${CONTAINER_PREFIX}_mysql mysql -uroot -p${DB_PASSWORD} ragflow -e "
         CREATE INDEX IF NOT EXISTS idx_documents_type_status ON documents(type, status);
         CREATE INDEX IF NOT EXISTS idx_conversations_dataset_status ON conversations(dataset_id, status);
         CREATE INDEX IF NOT EXISTS idx_messages_conversation_time ON messages(conversation_id, create_time);
@@ -487,14 +487,14 @@ backup_databases() {
         log "备份MySQL数据库..."
 
         # 备份所有数据库结构和数据
-        docker exec "${CONTAINER_PREFIX}_mysql" mysqldump -u root -p"${DB_*}" --all-databases --single-transaction --routines --triggers --events --comments > "${backup_dir}/mysql_all_databases.sql" 2>/dev/null
+        docker exec "${CONTAINER_PREFIX}_mysql" mysqldump -u root -p"${DB_PASSWORD}" --all-databases --single-transaction --routines --triggers --events --comments > "${backup_dir}/mysql_all_databases.sql" 2>/dev/null
 
         # 单独备份重要数据库
-        docker exec "${CONTAINER_PREFIX}_mysql" mysqldump -u root -p"${DB_*}" --single-transaction --routines --triggers ragflow > "${backup_dir}/mysql_ragflow.sql" 2>/dev/null
+        docker exec "${CONTAINER_PREFIX}_mysql" mysqldump -u root -p"${DB_PASSWORD}" --single-transaction --routines --triggers ragflow > "${backup_dir}/mysql_ragflow.sql" 2>/dev/null
 
         # 备份系统信息
-        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" -e "SELECT version();" > "${backup_dir}/mysql_version.txt" 2>/dev/null
-        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" -e "SHOW DATABASES;" > "${backup_dir}/mysql_databases.txt" 2>/dev/null
+        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "SELECT version();" > "${backup_dir}/mysql_version.txt" 2>/dev/null
+        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "SHOW DATABASES;" > "${backup_dir}/mysql_databases.txt" 2>/dev/null
 
         if [ -s "${backup_dir}/mysql_all_databases.sql" ]; then
             success "MySQL数据库备份完成"
@@ -508,16 +508,16 @@ backup_databases() {
         log "备份PostgreSQL数据库..."
 
         # 备份所有数据库
-        docker exec -e PG*="${DB_*}" "${CONTAINER_PREFIX}_postgres" pg_dumpall -U postgres > "${backup_dir}/postgres_all_databases.sql" 2>/dev/null
+        docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" pg_dumpall -U postgres > "${backup_dir}/postgres_all_databases.sql" 2>/dev/null
 
         # 单独备份重要数据库
         for db in dify n8n oneapi; do
-            docker exec -e PG*="${DB_*}" "${CONTAINER_PREFIX}_postgres" pg_dump -U postgres "$db" > "${backup_dir}/postgres_${db}.sql" 2>/dev/null
+            docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" pg_dump -U postgres "$db" > "${backup_dir}/postgres_${db}.sql" 2>/dev/null
         done
 
         # 备份系统信息
-        docker exec -e PG*="${DB_*}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "SELECT version();" > "${backup_dir}/postgres_version.txt" 2>/dev/null
-        docker exec -e PG*="${DB_*}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "\\l" > "${backup_dir}/postgres_databases.txt" 2>/dev/null
+        docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "SELECT version();" > "${backup_dir}/postgres_version.txt" 2>/dev/null
+        docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "\\l" > "${backup_dir}/postgres_databases.txt" 2>/dev/null
 
         if [ -s "${backup_dir}/postgres_all_databases.sql" ]; then
             success "PostgreSQL数据库备份完成"
@@ -625,7 +625,7 @@ restore_databases() {
     # 恢复MySQL
     if [ -f "${backup_dir}/mysql_all_databases.sql" ]; then
         log "恢复MySQL数据库..."
-        docker exec -i "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" < "${backup_dir}/mysql_all_databases.sql" 2>/dev/null
+        docker exec -i "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" < "${backup_dir}/mysql_all_databases.sql" 2>/dev/null
         if [ $? -eq 0 ]; then
             success "MySQL数据库恢复完成"
         else
@@ -636,7 +636,7 @@ restore_databases() {
     # 恢复PostgreSQL
     if [ -f "${backup_dir}/postgres_all_databases.sql" ]; then
         log "恢复PostgreSQL数据库..."
-        docker exec -i -e PG*="${DB_*}" "${CONTAINER_PREFIX}_postgres" psql -U postgres < "${backup_dir}/postgres_all_databases.sql" 2>/dev/null
+        docker exec -i -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres < "${backup_dir}/postgres_all_databases.sql" 2>/dev/null
         if [ $? -eq 0 ]; then
             success "PostgreSQL数据库恢复完成"
         else
@@ -735,17 +735,17 @@ check_database_health() {
     # 检查MySQL
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_mysql"; then
         echo -n "MySQL连接测试: "
-        if docker exec "${CONTAINER_PREFIX}_mysql" mysqladmin ping -u root -p"${DB_*}" --silent 2>/dev/null; then
+        if docker exec "${CONTAINER_PREFIX}_mysql" mysqladmin ping -u root -p"${DB_PASSWORD}" --silent 2>/dev/null; then
             echo "✅ 正常"
 
             # 显示详细信息
-            local mysql_version=$(docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" -e "SELECT VERSION();" 2>/dev/null | tail -1)
+            local mysql_version=$(docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "SELECT VERSION();" 2>/dev/null | tail -1)
             echo "  版本: $mysql_version"
 
-            local mysql_uptime=$(docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" -e "SHOW STATUS LIKE 'Uptime';" 2>/dev/null | tail -1 | awk '{print $2}')
+            local mysql_uptime=$(docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "SHOW STATUS LIKE 'Uptime';" 2>/dev/null | tail -1 | awk '{print $2}')
             echo "  运行时间: $((mysql_uptime / 3600))小时"
 
-            local mysql_connections=$(docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" -e "SHOW STATUS LIKE 'Threads_connected';" 2>/dev/null | tail -1 | awk '{print $2}')
+            local mysql_connections=$(docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "SHOW STATUS LIKE 'Threads_connected';" 2>/dev/null | tail -1 | awk '{print $2}')
             echo "  当前连接数: $mysql_connections"
         else
             echo "❌ 连接失败"
@@ -761,10 +761,10 @@ check_database_health() {
             echo "✅ 正常"
 
             # 显示详细信息
-            local pg_version=$(docker exec -e PG*="${DB_*}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -t -c "SELECT version();" 2>/dev/null | head -1 | xargs)
+            local pg_version=$(docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -t -c "SELECT version();" 2>/dev/null | head -1 | xargs)
             echo "  版本: ${pg_version:0:50}..."
 
-            local pg_connections=$(docker exec -e PG*="${DB_*}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -t -c "SELECT count(*) FROM pg_stat_activity;" 2>/dev/null | xargs)
+            local pg_connections=$(docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -t -c "SELECT count(*) FROM pg_stat_activity;" 2>/dev/null | xargs)
             echo "  当前连接数: $pg_connections"
         else
             echo "❌ 连接失败"
@@ -805,7 +805,7 @@ show_database_stats() {
     # MySQL统计
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_mysql"; then
         echo "MySQL数据库:"
-        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" -e "
+        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "
             SELECT
                 table_schema as 'Database',
                 count(*) as 'Tables',
@@ -820,7 +820,7 @@ show_database_stats() {
     # PostgreSQL统计
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres"; then
         echo "PostgreSQL数据库:"
-        docker exec -e PG*="${DB_*}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "
+        docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "
             SELECT
                 datname as \"Database\",
                 pg_size_pretty(pg_database_size(datname)) as \"Size\"
@@ -874,12 +874,12 @@ maintain_databases() {
         log "执行MySQL维护..."
 
         # 分析表
-        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" -e "
+        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "
             ANALYZE TABLE ragflow.users, ragflow.datasets, ragflow.documents;
         " 2>/dev/null || true
 
         # 优化表
-        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" -e "
+        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "
             OPTIMIZE TABLE ragflow.conversations, ragflow.messages;
         " 2>/dev/null || true
 
@@ -892,12 +892,12 @@ maintain_databases() {
 
         # 更新统计信息
         for db in dify n8n oneapi; do
-            docker exec -e PG*="${DB_*}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -d "$db" -c "ANALYZE;" 2>/dev/null || true
+            docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -d "$db" -c "ANALYZE;" 2>/dev/null || true
         done
 
         # 清理死元组
         for db in dify n8n oneapi; do
-            docker exec -e PG*="${DB_*}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -d "$db" -c "VACUUM;" 2>/dev/null || true
+            docker exec -e PG*="${DB_PASSWORD}" "${CONTAINER_PREFIX}_postgres" psql -U postgres -d "$db" -c "VACUUM;" 2>/dev/null || true
         done
 
         success "PostgreSQL维护完成"
@@ -925,10 +925,10 @@ maintain_databases() {
 }
 
 # 重置数据库密码
-reset_database_*() {
-    local new_*="$1"
+reset_database_password() {
+    local new_password="$1"
 
-    if [ -z "$new_*" ]; then
+    if [ -z "$new_password" ]; then
         error "请提供新密码"
         return 1
     fi
@@ -954,12 +954,12 @@ reset_database_*() {
     # 重置MySQL密码
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_mysql"; then
         log "重置MySQL密码..."
-        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_*}" -e "
-            SET PASSWORD FOR 'root'@'%' = PASSWORD('$new_*');
-            SET PASSWORD FOR 'root'@'localhost' = PASSWORD('$new_*');
-            UPDATE mysql.user SET * = PASSWORD('$new_*') WHERE User = 'ragflow';
-            UPDATE mysql.user SET * = PASSWORD('$new_*') WHERE User = 'dify';
-            UPDATE mysql.user SET * = PASSWORD('$new_*') WHERE User = 'oneapi';
+        docker exec "${CONTAINER_PREFIX}_mysql" mysql -u root -p"${DB_PASSWORD}" -e "
+            SET PASSWORD FOR 'root'@'%' = PASSWORD('$new_password');
+            SET PASSWORD FOR 'root'@'localhost' = PASSWORD('$new_password');
+            UPDATE mysql.user SET * = PASSWORD('$new_password') WHERE User = 'ragflow';
+            UPDATE mysql.user SET * = PASSWORD('$new_password') WHERE User = 'dify';
+            UPDATE mysql.user SET * = PASSWORD('$new_password') WHERE User = 'oneapi';
             FLUSH PRIVILEGES;
         " 2>/dev/null
         success "MySQL密码重置完成"
@@ -969,17 +969,17 @@ reset_database_*() {
     if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres"; then
         log "重置PostgreSQL密码..."
         docker exec "${CONTAINER_PREFIX}_postgres" psql -U postgres -c "
-            ALTER USER postgres * '$new_*';
-            ALTER USER dify_user * '$new_*';
-            ALTER USER n8n_user * '$new_*';
-            ALTER USER oneapi_user * '$new_*';
+            ALTER USER postgres * '$new_password';
+            ALTER USER dify_user * '$new_password';
+            ALTER USER n8n_user * '$new_password';
+            ALTER USER oneapi_user * '$new_password';
         " 2>/dev/null
         success "PostgreSQL密码重置完成"
     fi
 
     # 更新配置文件
     log "更新配置文件..."
-    sed -i "s/^DB_*=.*/DB_*=\"$new_*\"/" "modules/config.sh"
+    sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=\"$new_password\"/" "modules/config.sh"
 
     # 重新生成应用配置
     source modules/config.sh
@@ -1012,7 +1012,7 @@ export_database_config() {
 # 导出时间: $(date)
 
 # 基础配置
-DB_*=${DB_*}
+DB_PASSWORD=${DB_PASSWORD}
 MYSQL_PORT=${MYSQL_PORT}
 POSTGRES_PORT=${POSTGRES_PORT}
 REDIS_PORT=${REDIS_PORT}
@@ -1034,8 +1034,8 @@ REDIS_DATABASES=16
 REDIS_MAXMEMORY=1gb
 
 # 连接字符串
-MYSQL_CONNECTION_STRING="mysql://root:${DB_*}@${SERVER_IP}:${MYSQL_PORT}"
-POSTGRES_CONNECTION_STRING="postgresql://postgres:${DB_*}@${SERVER_IP}:${POSTGRES_PORT}"
+MYSQL_CONNECTION_STRING="mysql://root:${DB_PASSWORD}@${SERVER_IP}:${MYSQL_PORT}"
+POSTGRES_CONNECTION_STRING="postgresql://postgres:${DB_PASSWORD}@${SERVER_IP}:${POSTGRES_PORT}"
 REDIS_CONNECTION_STRING="redis://${SERVER_IP}:${REDIS_PORT}"
 CONFIG_EOF
 
