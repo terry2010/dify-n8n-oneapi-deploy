@@ -111,10 +111,10 @@ services:
       SECRET_KEY: dify-secret-key-random123456
       DB_USERNAME: postgres
       DB_PASSWORD: "${DB_PASSWORD}"
-      DB_HOST: postgres
+      DB_HOST: ${CONTAINER_PREFIX}_postgres
       DB_PORT: "5432"
       DB_DATABASE: dify
-      REDIS_HOST: redis
+      REDIS_HOST: ${CONTAINER_PREFIX}_redis
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
@@ -164,15 +164,15 @@ start_dify_services() {
     cd "$INSTALL_PATH"
 
     # 先启动Sandbox
-    docker-compose -f docker-compose-dify.yml up -d dify_sandbox
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d dify_sandbox --remove-orphans
     wait_for_service "dify_sandbox" "curl -f http://localhost:8194/health" 60
 
     # 启动API和Worker
-    docker-compose -f docker-compose-dify.yml up -d dify_api dify_worker
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d dify_api dify_worker
     wait_for_service "dify_api" "curl -f http://localhost:5001/health" 120
 
     # 启动Web服务
-    docker-compose -f docker-compose-dify.yml up -d dify_web
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d dify_web
     sleep 15
 
     success "Dify服务启动完成"

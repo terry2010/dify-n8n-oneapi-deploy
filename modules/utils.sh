@@ -246,6 +246,12 @@ wait_for_service() {
     local timeout="${3:-60}"
     local interval="${4:-5}"
     local container_name="${CONTAINER_PREFIX}_${service_name}"
+    
+    # 为MySQL服务设置更长的超时时间
+    if [ "$service_name" = "mysql" ]; then
+        timeout=180
+        log "MySQL服务可能需要更长时间初始化，设置超时时间为${timeout}秒"
+    fi
 
     log "等待服务 $service_name 启动..."
 

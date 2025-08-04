@@ -104,7 +104,7 @@ start_n8n_services() {
     ensure_directory "$INSTALL_PATH/volumes/n8n/data" "1000:1000" "755"
 
     # 启动n8n服务
-    docker-compose -f docker-compose-n8n.yml up -d n8n
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-n8n.yml up -d n8n --remove-orphans
     wait_for_service "n8n" "wget --quiet --tries=1 --spider http://localhost:5678/healthz" 60
 
     success "n8n服务启动完成"

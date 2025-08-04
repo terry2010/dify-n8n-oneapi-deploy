@@ -26,6 +26,7 @@ show_help() {
     echo "  --update-config         更新配置文件"
     echo "  --status                查看服务状态"
     echo "  --clean                 清理现有环境"
+    echo "  --force                 强制安装，先删除同名容器并检查端口占用"
     echo "  -h, --help              显示此帮助信息"
     echo ""
     echo "示例:"
@@ -800,19 +801,87 @@ echo "     $0 --ragflow <端口> --apply  # 修改RAGFlow端口"
 EOF
 }
 
+# 强制模式处理函数
+# 强制模式处理函数
+force_mode() {
+    log "启用强制模式..."
+    
+    # 检查并删除同名容器
+    local containers_to_remove=()
+    
+    # 根据要安装的应用确定要删除的容器
+    if [[ "$1" == "all" || "$1" == "infrastructure" ]]; then
+        containers_to_remove+=("${CONTAINER_PREFIX}_mysql" "${CONTAINER_PREFIX}_postgres" "${CONTAINER_PREFIX}_redis" "${CONTAINER_PREFIX}_nginx")
+        
+        # 只在安装全部或基础设施时删除并重建网络
+        log "删除并重建网络..."
+        docker network rm aiserver_network >/dev/null 2>&1 || true
+        docker network create aiserver_network 2>/dev/null || true
+    fi
+    
+    if [[ "$1" == "all" || "$1" == "dify" || "$1" =~ "dify" ]]; then
+        containers_to_remove+=("${CONTAINER_PREFIX}_dify_api" "${CONTAINER_PREFIX}_dify_web" "${CONTAINER_PREFIX}_dify_worker" "${CONTAINER_PREFIX}_dify_sandbox")
+    fi
+    
+    if [[ "$1" == "all" || "$1" == "n8n" || "$1" =~ "n8n" ]]; then
+        containers_to_remove+=("${CONTAINER_PREFIX}_n8n")
+    fi
+    
+    if [[ "$1" == "all" || "$1" == "oneapi" || "$1" =~ "oneapi" ]]; then
+        containers_to_remove+=("${CONTAINER_PREFIX}_oneapi")
+    fi
+    
+    if [[ "$1" == "all" || "$1" == "ragflow" || "$1" =~ "ragflow" ]]; then
+        containers_to_remove+=("${CONTAINER_PREFIX}_ragflow_api" "${CONTAINER_PREFIX}_ragflow_web" "${CONTAINER_PREFIX}_ragflow_worker" "${CONTAINER_PREFIX}_elasticsearch" "${CONTAINER_PREFIX}_minio")
+    fi
+    
+    # 删除容器
+    for container in "${containers_to_remove[@]}"; do
+        if docker ps -a --format "{{.Names}}" | grep -q "^${container}$"; then
+            log "删除容器: ${container}"
+            docker rm -f "${container}" >/dev/null 2>&1 || warning "无法删除容器: ${container}"
+        fi
+    done
+    
+    # 检查端口占用
+    check_ports
+    
+    success "强制模式准备完成"
+}
+
 # 主函数
 main() {
     # 初始化配置
     init_config
+    
+    # 检查是否启用强制模式
+    FORCE_MODE=false
 
     case "$1" in
+        --force)
+            FORCE_MODE=true
+            shift
+            if [ -z "$1" ]; then
+                error "使用--force参数时必须指定安装选项"
+                show_help
+                exit 1
+            fi
+            main "$@"
+            exit 0
+            ;;
         --all)
+            if [ "$FORCE_MODE" = true ]; then
+                force_mode "all"
+            fi
             install_all
             ;;
         --infrastructure)
             check_environment
             check_docker
             validate_config
+            if [ "$FORCE_MODE" = true ]; then
+                force_mode "infrastructure"
+            fi
             install_infrastructure
             ;;
         --app)
@@ -824,6 +893,9 @@ main() {
             check_environment
             check_docker
             validate_config
+            if [ "$FORCE_MODE" = true ]; then
+                force_mode "$2"
+            fi
             install_app "$2"
             ;;
         --apps)
@@ -835,6 +907,9 @@ main() {
             check_environment
             check_docker
             validate_config
+            if [ "$FORCE_MODE" = true ]; then
+                force_mode "$2"
+            fi
             IFS=',' read -ra APPS <<< "$2"
             for app in "${APPS[@]}"; do
                 install_app "$app"

@@ -145,8 +145,8 @@ start_database_services() {
     # 创建网络
     docker network create aiserver_network 2>/dev/null || true
 
-    # 启动数据库服务
-    docker-compose -f docker-compose-db.yml up -d
+    # 启动数据库服务（添加项目名称）
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-db.yml up -d
 
     # 等待数据库服务启动（增加超时时间）
     log "等待MySQL服务启动（可能需要较长时间进行初始化）..."
