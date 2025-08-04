@@ -1,0 +1,175 @@
+1. 项目文件结构
+
+aiserver/
+├── install.sh                          # 主入口安装脚本
+├── modules/                             # 功能模块目录
+│   ├── config.sh                        # 配置管理模块
+│   ├── utils.sh                         # 工具函数模块
+│   ├── database.sh                      # 数据库安装模块
+│   ├── nginx.sh                         # Nginx反向代理模块
+│   ├── dify.sh                          # Dify系统安装模块
+│   ├── n8n.sh                           # n8n系统安装模块
+│   └── oneapi.sh                        # OneAPI系统安装模块
+├── scripts/                             # 管理脚本目录
+│   ├── manage.sh                        # 服务管理脚本
+│   ├── logs.sh                          # 日志查看脚本
+│   ├── backup.sh                        # 数据备份脚本
+│   ├── restore.sh                       # 数据恢复脚本
+│   ├── change_domain.sh                 # 域名修改脚本
+│   └── change_port.sh                   # 端口修改脚本
+├── config/                              # 配置文件目录（运行时生成）
+│   ├── nginx.conf                       # Nginx配置文件
+│   └── app.conf                         # 应用配置文件
+├── volumes/                             # 数据卷目录（运行时生成）
+│   ├── mysql/data/                      # MySQL数据目录
+│   ├── postgres/data/                   # PostgreSQL数据目录
+│   ├── redis/data/                      # Redis数据目录
+│   ├── n8n/data/                        # n8n数据目录
+│   ├── app/storage/                     # Dify应用存储
+│   ├── sandbox/dependencies/            # Dify沙箱依赖
+│   └── oneapi/data/                     # OneAPI数据目录
+├── backup/                              # 备份目录（运行时生成）
+├── logs/                                # 日志目录（运行时生成）
+├── docker-compose-db.yml               # 数据库Docker Compose文件（运行时生成）
+├── docker-compose-dify.yml             # Dify Docker Compose文件（运行时生成）
+├── docker-compose-n8n.yml              # n8n Docker Compose文件（运行时生成）
+├── docker-compose-oneapi.yml           # OneAPI Docker Compose文件（运行时生成）
+└── docker-compose-nginx.yml            # Nginx Docker Compose文件（运行时生成）
+
+
+
+prompt：
+请帮我从零开始创建一个AI服务集群一键安装脚本项目，要求如下：
+
+## 项目概述
+创建一个模块化的Shell脚本系统，用于在群晖NAS上一键安装和管理AI服务集群，包含Dify、n8n、OneAPI三个核心应用，以及MySQL、PostgreSQL、Redis数据库服务。
+
+## 核心需求
+
+### 1. 系统架构
+- 采用模块化设计，主入口脚本+功能模块+管理脚本的三层结构
+- 支持独立域名访问模式（如dify.example.com、n8n.example.com）
+- 支持IP+端口访问模式
+- 支持域名模式下的自定义端口配置
+
+### 2. 域名配置要求
+- 在脚本开头提供域名配置区域，可设置：
+  - DIFY_DOMAIN="dify.demodomain.com"
+  - N8N_DOMAIN="n8n.demodomain.com"
+  - ONEAPI_DOMAIN="oneapi.demodomain.com"
+  - DOMAIN_PORT="" (域名模式下的端口，留空为80)
+- 如果域名为空，自动切换到IP+端口模式
+
+### 3. 端口配置
+- N8N_WEB_PORT=8601
+- DIFY_WEB_PORT=8602
+- ONEAPI_WEB_PORT=8603
+- MYSQL_PORT=3306
+- POSTGRES_PORT=5433
+- REDIS_PORT=6379
+- DIFY_API_PORT=5002
+- 域名模式下Nginx监听DOMAIN_PORT或80端口
+
+### 4. 数据库配置
+- DB_*="654321" (MySQL和PostgreSQL密码)
+- REDIS_*="" (Redis密码，留空)
+- 安装路径：/volume1/homes/terry/aiserver
+
+### 5. 服务组件版本
+- MySQL: 8.0
+- PostgreSQL: 15-alpine
+- Redis: 7-alpine
+- Dify API/Worker: langgenius/dify-api:1.7.1
+- Dify Web: langgenius/dify-web:1.7.1
+- Dify Sandbox: langgenius/dify-sandbox:0.2.12
+- n8n: n8nio/n8n:latest
+- OneAPI: justsong/one-api:latest
+- Nginx: nginx:latest
+
+### 6. 文件结构
+
+项目根目录/
+├── install.sh (主入口脚本)
+├── modules/ (功能模块)
+│ ├── config.sh (配置管理)
+│ ├── utils.sh (工具函数)
+│ ├── database.sh (数据库模块)
+│ ├── nginx.sh (反向代理模块)
+│ ├── dify.sh (Dify安装模块)
+│ ├── n8n.sh (n8n安装模块)
+│ └── oneapi.sh (OneAPI安装模块)
+└── scripts/ (管理脚本)
+├── manage.sh (服务管理)
+├── logs.sh (日志查看)
+├── backup.sh (数据备份)
+├── restore.sh (数据恢复)
+├── change_domain.sh (域名修改)
+└── change_port.sh (端口修改)
+
+
+### 7. 功能要求
+
+#### 主入口脚本(install.sh)功能：
+- --all: 完整安装所有服务
+- --infrastructure: 只安装基础设施(数据库)
+- --app <name>: 安装指定应用(dify|n8n|oneapi)
+- --apps <name1,name2>: 安装多个应用
+- --update-config: 更新配置
+- --status: 查看服务状态
+- --clean: 清理环境
+
+#### 备份脚本(backup.sh)功能：
+- 支持备份所有系统数据（默认）
+- 支持备份指定系统：mysql, postgres, redis, dify, n8n, oneapi, config
+- 自动压缩备份文件
+- 清理30天前的旧备份
+- 生成备份摘要信息
+
+#### 域名修改脚本(change_domain.sh)功能：
+- --show: 显示当前域名配置
+- --dify <域名>: 设置Dify域名
+- --n8n <域名>: 设置n8n域名
+- --oneapi <域名>: 设置OneAPI域名
+- --port <端口>: 设置域名模式端口
+- --disable-domain: 禁用域名模式
+- --apply: 应用配置更改
+- 包含域名格式验证、DNS解析检查、连通性测试
+
+#### 端口修改脚本(change_port.sh)功能：
+- 支持在不重新安装的情况下修改各服务端口
+- 自动检查端口占用冲突
+- 重新生成配置文件并重启相关服务
+
+### 8. Docker Compose配置
+- 每个服务组生成独立的docker-compose文件
+- docker-compose-db.yml: 数据库服务
+- docker-compose-dify.yml: Dify相关服务
+- docker-compose-n8n.yml: n8n服务
+- docker-compose-oneapi.yml: OneAPI服务
+- docker-compose-nginx.yml: Nginx反向代理
+
+### 9. Nginx配置
+- 域名模式：为每个域名配置独立的server块
+- IP模式：统一入口+路径代理(/dify/, /n8n/, /oneapi/)
+- 包含CORS处理、WebSocket支持
+- 自动生成服务导航页面
+
+### 10. 特殊要求
+- 所有涉及密码的变量必须使用正确的变量名，不能被替换为星号
+- n8n数据目录需要正确的权限设置(1000:1000)
+- 服务启动需要按正确的依赖顺序
+- 包含完整的错误处理和用户友好提示
+- 支持服务健康检查和状态监控
+
+### 11. 日志和监控
+- logs.sh支持查看指定服务日志或所有服务概览
+- 实时日志跟踪功能
+- 服务状态检查和健康监控
+
+### 12. 数据持久化
+- 所有服务数据保存在volumes目录
+- 配置文件保存在config目录
+- 日志文件保存在logs目录
+- 备份文件保存在backup目录
+
+请按照以上要求，完整生成所有脚本文件。每个脚本都需要是完整可用的，包含详细的注释和错误处理。确保密码变量不会被替换为星号。
