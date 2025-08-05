@@ -188,7 +188,8 @@ start_ragflow_services() {
     # 启动RAGFlow核心服务
     log "启动RAGFlow核心服务..."
     COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d --remove-orphans ragflow
-    wait_for_service "ragflow" "curl -f http://localhost:80/health" 180
+    wait_for_service "ragflow" "curl -f http://${CONTAINER_PREFIX}_ragflow:80/health" 180
+
 
     success "RAGFlow服务启动完成"
 }
