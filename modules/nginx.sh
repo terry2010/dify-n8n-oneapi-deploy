@@ -65,27 +65,27 @@ http {
 
     # 定义上游服务器
     upstream dify_api_upstream {
-        server dify_api:5001;
+        server ${CONTAINER_PREFIX}_dify_api:5001;
     }
 
     upstream dify_web_upstream {
-        server dify_web:3000;
+        server ${CONTAINER_PREFIX}_dify_web:3000;
     }
 
     upstream n8n_upstream {
-        server n8n:5678;
+        server ${CONTAINER_PREFIX}_n8n:5678;
     }
 
     upstream oneapi_upstream {
-        server oneapi:3000;
+        server ${CONTAINER_PREFIX}_oneapi:3000;
     }
 
     upstream ragflow_upstream {
-        server ragflow:80;
+        server ${CONTAINER_PREFIX}_ragflow:80;
     }
 
     upstream ragflow_api_upstream {
-        server ragflow:9380;
+        server ${CONTAINER_PREFIX}_ragflow:9380;
     }
 
     # Dify服务器配置
@@ -322,27 +322,27 @@ http {
 
     # 定义上游服务器
     upstream dify_api_upstream {
-        server dify_api:5001;
+        server ${CONTAINER_PREFIX}_dify_api:5001;
     }
 
     upstream dify_web_upstream {
-        server dify_web:3000;
+        server ${CONTAINER_PREFIX}_dify_web:3000;
     }
 
     upstream n8n_upstream {
-        server n8n:5678;
+        server ${CONTAINER_PREFIX}_n8n:5678;
     }
 
     upstream oneapi_upstream {
-        server oneapi:3000;
+        server ${CONTAINER_PREFIX}_oneapi:3000;
     }
 
     upstream ragflow_upstream {
-        server ragflow:80;
+        server ${CONTAINER_PREFIX}_ragflow:80;
     }
 
     upstream ragflow_api_upstream {
-        server ragflow:9380;
+        server ${CONTAINER_PREFIX}_ragflow:9380;
     }
 
     server {
