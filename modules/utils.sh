@@ -243,7 +243,7 @@ check_service_health() {
 wait_for_service() {
     local service_name="$1"
     local health_cmd="$2"
-    local timeout="${3:-60}"
+    local timeout="${5:-60}"
     local interval="${4:-5}"
     local container_name="${CONTAINER_PREFIX}_${service_name}"
     
