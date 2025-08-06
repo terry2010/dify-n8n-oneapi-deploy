@@ -137,38 +137,91 @@ EOF
 check_and_fix_mysql_corruption() {
     local mysql_data_dir="$INSTALL_PATH/volumes/mysql/data"
     
-    if [ -d "$mysql_data_dir" ]; then
-        log "检查MySQL数据目录..."
-        
-        # 检查是否存在损坏标记文件
-        if [ -f "$mysql_data_dir/ib_logfile0" ] || [ -f "$mysql_data_dir/ib_logfile1" ]; then
-            log "检测到旧的InnoDB日志文件，可能导致启动失败"
-            
-            # 备份旧数据
-            local backup_dir="$INSTALL_PATH/mysql_corruption_backup_$(date +%Y%m%d_%H%M%S)"
-            log "备份MySQL数据到: $backup_dir"
-            cp -r "$mysql_data_dir" "$backup_dir" 2>/dev/null || true
-            
-            # 删除损坏的日志文件
-            log "清理损坏的InnoDB日志文件..."
-            rm -f "$mysql_data_dir/ib_logfile"* 2>/dev/null || true
-            rm -f "$mysql_data_dir/ibdata1" 2>/dev/null || true
-            
-            # 如果数据目录严重损坏，完全重置
-            if [ -f "$mysql_data_dir/mysql.sock" ]; then
-                rm -f "$mysql_data_dir/mysql.sock" 2>/dev/null || true
-            fi
-            
-            warning "MySQL数据目录已清理，将重新初始化"
-        fi
-        
-        # 检查目录权限
-        if [ "$(stat -c %U "$mysql_data_dir" 2>/dev/null)" != "999" ]; then
-            log "修复MySQL数据目录权限..."
-            chown -R 999:999 "$mysql_data_dir" 2>/dev/null || true
-            chmod -R 755 "$mysql_data_dir" 2>/dev/null || true
-        fi
+    log "检查MySQL数据目录..."
+    
+    # 检查数据目录是否存在
+    if [ ! -d "$mysql_data_dir" ]; then
+        log "创建MySQL数据目录..."
+        mkdir -p "$mysql_data_dir"
+        chown -R 999:999 "$mysql_data_dir" 2>/dev/null || true
+        chmod -R 755 "$mysql_data_dir" 2>/dev/null || true
+        return 0
     fi
+    
+    # 检查是否有容器正在运行
+    if docker ps | grep -q "${CONTAINER_PREFIX}_mysql"; then
+        log "停止运行中的MySQL容器..."
+        docker stop "${CONTAINER_PREFIX}_mysql" 2>/dev/null || true
+        sleep 5
+    fi
+    
+    # 删除失败的容器
+    if docker ps -a | grep -q "${CONTAINER_PREFIX}_mysql"; then
+        log "删除旧的MySQL容器..."
+        docker rm -f "${CONTAINER_PREFIX}_mysql" 2>/dev/null || true
+        sleep 5
+    fi
+    
+    # 检测数据目录内容
+    local files_count=$(find "$mysql_data_dir" -type f | wc -l)
+    
+    # 如果目录为空或文件很少，说明是新安装，不需要清理
+    if [ "$files_count" -lt 5 ]; then
+        log "MySQL数据目录为空或新建，跳过清理"
+        return 0
+    fi
+    
+    # 检查是否存在损坏标记文件或容器持续重启
+    if [ -f "$mysql_data_dir/ib_logfile0" ] || [ -f "$mysql_data_dir/ib_logfile1" ] || \
+       [ -f "$mysql_data_dir/ibdata1" ] || [ -f "$mysql_data_dir/mysql.sock" ] || \
+       docker ps -a | grep "${CONTAINER_PREFIX}_mysql" | grep -q "Restarting"; then
+        
+        log "检测到MySQL数据可能损坏，准备修复..."
+        
+        # 备份旧数据
+        local backup_dir="$INSTALL_PATH/mysql_corruption_backup_$(date +%Y%m%d_%H%M%S)"
+        log "备份MySQL数据到: $backup_dir"
+        mkdir -p "$backup_dir"
+        cp -r "$mysql_data_dir" "$backup_dir" 2>/dev/null || true
+        
+        # 强制删除所有数据文件，但保留目录结构
+        log "清理损坏的MySQL数据文件..."
+        find "$mysql_data_dir" -type f -delete 2>/dev/null || true
+        
+        # 删除所有子目录
+        find "$mysql_data_dir" -mindepth 1 -type d -exec rm -rf {} \; 2>/dev/null || true
+        
+        warning "MySQL数据目录已完全清理，将重新初始化数据库"
+    else
+        log "MySQL数据目录检查正常"
+    fi
+    
+    # 创建必要的配置目录
+    mkdir -p "$INSTALL_PATH/volumes/mysql/conf"
+    mkdir -p "$INSTALL_PATH/volumes/mysql/logs"
+    
+    # 创建自定义配置文件以提高稳定性
+    cat > "$INSTALL_PATH/volumes/mysql/conf/custom.cnf" << EOF
+[mysqld]
+innodb_buffer_pool_size = 256M
+innodb_log_file_size = 64M
+innodb_flush_log_at_trx_commit = 2
+max_connections = 200
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+default_authentication_plugin = mysql_native_password
+sql_mode = STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO
+innodb_flush_method = O_DIRECT
+innodb_doublewrite = 0
+EOF
+    
+    # 确保目录权限正确
+    log "设置MySQL目录权限..."
+    chown -R 999:999 "$INSTALL_PATH/volumes/mysql" 2>/dev/null || true
+    chmod -R 755 "$INSTALL_PATH/volumes/mysql" 2>/dev/null || true
+    
+    success "MySQL数据目录检查和修复完成"
+}
 }
 
 # 启动数据库服务
