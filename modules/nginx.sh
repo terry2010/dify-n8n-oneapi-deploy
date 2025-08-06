@@ -1059,6 +1059,32 @@ EOF
 generate_nginx_compose() {
     log "生成Nginx Docker Compose配置..."
 
+    # 根据部署模式决定端口映射
+    local port_mappings=""
+    
+    # 域名模式下只需要映射Nginx端口
+    if [ "$DEPLOY_MODE" = "domain" ]; then
+        if [ -n "$DOMAIN_PORT" ] && [ "$DOMAIN_PORT" != "80" ]; then
+            port_mappings="      - \"${DOMAIN_PORT}:80\""
+        else
+            port_mappings="      - \"80:80\""
+        fi
+    # IP模式或双模式需要映射所有服务端口
+    else
+        if [ "$DEPLOY_MODE" = "dual" ] && [ -n "$DOMAIN_PORT" ] && [ "$DOMAIN_PORT" != "80" ]; then
+            port_mappings="      - \"${DOMAIN_PORT}:80\""
+        else
+            port_mappings="      - \"${NGINX_PORT}:80\""
+        fi
+        
+        # 添加各服务的独立端口映射
+        port_mappings="$port_mappings
+      - \"${DIFY_WEB_PORT}:${DIFY_WEB_PORT}\"
+      - \"${N8N_WEB_PORT}:${N8N_WEB_PORT}\"
+      - \"${ONEAPI_WEB_PORT}:${ONEAPI_WEB_PORT}\"
+      - \"${RAGFLOW_WEB_PORT}:${RAGFLOW_WEB_PORT}\""
+    fi
+
     cat > "$INSTALL_PATH/docker-compose-nginx.yml" << EOF
 version: '3.8'
 
@@ -1073,7 +1099,7 @@ services:
     container_name: ${CONTAINER_PREFIX}_nginx
     restart: always
     ports:
-      - "${NGINX_PORT}:80"
+$port_mappings
     volumes:
       - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./logs:/var/log/nginx
