@@ -27,6 +27,7 @@ show_help() {
     echo "  --status                查看服务状态"
     echo "  --clean                 清理现有环境"
     echo "  --force                 强制安装，先删除同名容器并检查端口占用"
+    echo "  --mode <mode>           设置部署模式 (domain|ip|dual)，默认为dual"
     echo "  -h, --help              显示此帮助信息"
     echo ""
     echo "示例:"
@@ -968,6 +969,26 @@ force_mode() {
 
 # 主函数
 main() {
+    # 检查是否设置部署模式
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --mode)
+                shift
+                if [[ "$1" == "domain" || "$1" == "ip" || "$1" == "dual" ]]; then
+                    export DEPLOY_MODE="$1"
+                    log "设置部署模式为: $DEPLOY_MODE"
+                    shift
+                else
+                    error "无效的部署模式: $1，有效值为: domain, ip, dual"
+                    exit 1
+                fi
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    
     # 初始化配置
     init_config
     

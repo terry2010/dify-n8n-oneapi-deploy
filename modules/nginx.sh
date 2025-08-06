@@ -22,15 +22,23 @@ configure_nginx() {
 
 # 生成Nginx配置文件
 generate_nginx_config() {
-    log "生成Nginx配置文件..."
+    case "$DEPLOY_MODE" in
+        "domain")
+            generate_domain_nginx_config
+            ;;
+        "ip")
+            generate_ip_nginx_config
+            ;;
+        "dual")
+            generate_dual_nginx_config
+            ;;
+        *)
+            # 默认使用双模式
+            generate_dual_nginx_config
+            ;;
+    esac
 
-    if [ "$USE_DOMAIN" = true ]; then
-        generate_domain_nginx_config
-    else
-        generate_ip_nginx_config
-    fi
-
-    success "Nginx配置文件生成完成"
+    log "Nginx配置文件生成完成"
 }
 
 # 检查服务是否运行
@@ -608,6 +616,106 @@ http {
     }
 }
 EOF
+}
+
+# 生成双模式的Nginx配置（同时支持域名和IP访问）
+generate_dual_nginx_config() {
+    log "生成双模式Nginx配置（同时支持域名和IP访问）..."
+    
+    local running_services=()
+    local existing_services=()
+    
+    for service in "dify_api" "dify_web" "n8n" "oneapi" "ragflow"; do
+        if check_service_running "$service"; then
+            running_services+=("$service")
+            existing_services+=("$service")
+            log "检测到运行中的服务: $service"
+        elif check_service_exists "$service"; then
+            existing_services+=("$service")
+            log "检测到存在但未运行的服务: $service"
+        else
+            log "服务未运行，将跳过: $service"
+        fi
+    done
+    
+    # 生成配置文件
+    cat > "$INSTALL_PATH/config/nginx.conf" << EOF
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    log_format main '\$remote_addr - \$remote_user [\$time_local] "\$request" '
+                   '\$status \$body_bytes_sent "\$http_referer" '
+                   '"\$http_user_agent" "\$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;
+    error_log /var/log/nginx/error.log;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    client_max_body_size 100M;
+
+    # 健康检查路由
+    server {
+        listen 80 default_server;
+        server_name _;
+        
+        location /health {
+            return 200 'healthy';
+        }
+        
+        # IP模式访问配置
+        location /dify/ {
+            proxy_pass http://${CONTAINER_PREFIX}_dify_web:3000/;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+        }
+        
+        location /n8n/ {
+            proxy_pass http://${CONTAINER_PREFIX}_n8n:5678/;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+        }
+        
+        location /oneapi/ {
+            proxy_pass http://${CONTAINER_PREFIX}_oneapi:3000/;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+        }
+        
+        location /ragflow/ {
+            proxy_pass http://${CONTAINER_PREFIX}_ragflow:80/;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+        }
+        
+        # 默认首页
+        location / {
+            return 302 /dify/;
+        }
+    }
+    
+    # 添加域名服务器配置
+EOF
+
+    # 生成域名服务器配置
+    generate_server_configs
+    
+    success "双模式Nginx配置生成完成"
 }
 
 # 生成IP模式的Nginx配置

@@ -24,6 +24,9 @@ SERVER_IP=""  # 留空自动获取，或手动设置IP
 INSTALL_PATH="/volume1/homes/terry/aiserver"  # 安装路径
 CONTAINER_PREFIX="aiserver"  # 容器名前缀
 
+# 部署模式: domain (仅域名), ip (仅IP), dual (双模式)
+DEPLOY_MODE="dual"  # 默认使用双模式
+
 # 服务端口配置
 N8N_WEB_PORT=8601
 DIFY_WEB_PORT=8602
@@ -67,9 +70,14 @@ init_config() {
         fi
     fi
 
+    # 初始化IP模式的URL
+    DIFY_IP_URL="http://$SERVER_IP:$DIFY_WEB_PORT"
+    N8N_IP_URL="http://$SERVER_IP:$N8N_WEB_PORT"
+    ONEAPI_IP_URL="http://$SERVER_IP:$ONEAPI_WEB_PORT"
+    RAGFLOW_IP_URL="http://$SERVER_IP:$RAGFLOW_WEB_PORT"
+
     # 检查域名配置
     if [ -n "$DIFY_DOMAIN" ] && [ -n "$N8N_DOMAIN" ] && [ -n "$ONEAPI_DOMAIN" ] && [ -n "$RAGFLOW_DOMAIN" ]; then
-        USE_DOMAIN=true
         # 确定域名模式下使用的端口
         if [ -n "$DOMAIN_PORT" ]; then
             NGINX_PORT="$DOMAIN_PORT"
@@ -79,22 +87,62 @@ init_config() {
 
         # 构建域名URL
         if [ -n "$DOMAIN_PORT" ] && [ "$DOMAIN_PORT" != "80" ] && [ "$DOMAIN_PORT" != "443" ]; then
-            DIFY_URL="http://$DIFY_DOMAIN:$DOMAIN_PORT"
-            N8N_URL="http://$N8N_DOMAIN:$DOMAIN_PORT"
-            ONEAPI_URL="http://$ONEAPI_DOMAIN:$DOMAIN_PORT"
-            RAGFLOW_URL="http://$RAGFLOW_DOMAIN:$DOMAIN_PORT"
+            DIFY_DOMAIN_URL="http://$DIFY_DOMAIN:$DOMAIN_PORT"
+            N8N_DOMAIN_URL="http://$N8N_DOMAIN:$DOMAIN_PORT"
+            ONEAPI_DOMAIN_URL="http://$ONEAPI_DOMAIN:$DOMAIN_PORT"
+            RAGFLOW_DOMAIN_URL="http://$RAGFLOW_DOMAIN:$DOMAIN_PORT"
         else
-            DIFY_URL="http://$DIFY_DOMAIN"
-            N8N_URL="http://$N8N_DOMAIN"
-            ONEAPI_URL="http://$ONEAPI_DOMAIN"
-            RAGFLOW_URL="http://$RAGFLOW_DOMAIN"
+            DIFY_DOMAIN_URL="http://$DIFY_DOMAIN"
+            N8N_DOMAIN_URL="http://$N8N_DOMAIN"
+            ONEAPI_DOMAIN_URL="http://$ONEAPI_DOMAIN"
+            RAGFLOW_DOMAIN_URL="http://$RAGFLOW_DOMAIN"
         fi
+
+        # 根据部署模式设置URL和域名模式标志
+        case "$DEPLOY_MODE" in
+            "domain")
+                USE_DOMAIN=true
+                DIFY_URL="$DIFY_DOMAIN_URL"
+                N8N_URL="$N8N_DOMAIN_URL"
+                ONEAPI_URL="$ONEAPI_DOMAIN_URL"
+                RAGFLOW_URL="$RAGFLOW_DOMAIN_URL"
+                log "使用域名模式部署"
+                ;;
+            "ip")
+                USE_DOMAIN=false
+                DIFY_URL="$DIFY_IP_URL"
+                N8N_URL="$N8N_IP_URL"
+                ONEAPI_URL="$ONEAPI_IP_URL"
+                RAGFLOW_URL="$RAGFLOW_IP_URL"
+                log "使用IP模式部署"
+                ;;
+            "dual")
+                USE_DOMAIN=true  # 为Nginx配置设置为域名模式，但同时支持IP访问
+                DIFY_URL="$DIFY_DOMAIN_URL"
+                N8N_URL="$N8N_DOMAIN_URL"
+                ONEAPI_URL="$ONEAPI_DOMAIN_URL"
+                RAGFLOW_URL="$RAGFLOW_DOMAIN_URL"
+                # 同时保存IP模式的URL供显示使用
+                log "使用双模式部署（同时支持域名和IP访问）"
+                ;;
+            *)
+                USE_DOMAIN=true  # 默认使用双模式
+                DIFY_URL="$DIFY_DOMAIN_URL"
+                N8N_URL="$N8N_DOMAIN_URL"
+                ONEAPI_URL="$ONEAPI_DOMAIN_URL"
+                RAGFLOW_URL="$RAGFLOW_DOMAIN_URL"
+                log "未识别的部署模式，默认使用双模式"
+                ;;
+        esac
     else
+        # 如果没有域名配置，强制使用IP模式
         USE_DOMAIN=false
-        DIFY_URL="http://$SERVER_IP:$DIFY_WEB_PORT"
-        N8N_URL="http://$SERVER_IP:$N8N_WEB_PORT"
-        ONEAPI_URL="http://$SERVER_IP:$ONEAPI_WEB_PORT"
-        RAGFLOW_URL="http://$SERVER_IP:$RAGFLOW_WEB_PORT"
+        DEPLOY_MODE="ip"
+        DIFY_URL="$DIFY_IP_URL"
+        N8N_URL="$N8N_IP_URL"
+        ONEAPI_URL="$ONEAPI_IP_URL"
+        RAGFLOW_URL="$RAGFLOW_IP_URL"
+        log "未配置域名，使用IP模式部署"
     fi
 
     log "配置初始化完成"
