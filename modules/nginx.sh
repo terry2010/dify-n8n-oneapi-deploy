@@ -660,6 +660,31 @@ http {
     tcp_nodelay on;
     keepalive_timeout 65;
     client_max_body_size 100M;
+    
+    # 添加所有必要的upstream配置，无论服务是否运行
+    upstream dify_api_upstream {
+        server ${CONTAINER_PREFIX}_dify_api:5001;
+    }
+    
+    upstream dify_web_upstream {
+        server ${CONTAINER_PREFIX}_dify_web:3000;
+    }
+    
+    upstream n8n_upstream {
+        server ${CONTAINER_PREFIX}_n8n:5678;
+    }
+    
+    upstream oneapi_upstream {
+        server ${CONTAINER_PREFIX}_oneapi:3000;
+    }
+    
+    upstream ragflow_upstream {
+        server ${CONTAINER_PREFIX}_ragflow:80;
+    }
+    
+    upstream ragflow_api_upstream {
+        server ${CONTAINER_PREFIX}_ragflow:9380;
+    }
 
     # 健康检查路由
     server {
