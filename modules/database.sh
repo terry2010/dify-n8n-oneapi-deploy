@@ -191,13 +191,37 @@ start_database_services() {
 
     # 等待数据库服务启动（增加超时时间）
     log "等待MySQL服务启动（可能需要较长时间进行初始化）..."
-    wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 300
+    wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 600
+    
+    # 如果MySQL启动失败，尝试重启
+    if [ $? -ne 0 ]; then
+        warning "MySQL服务启动超时，尝试重启..."
+        docker restart "${CONTAINER_PREFIX}_mysql"
+        sleep 30
+        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 300
+    fi
 
     log "等待PostgreSQL服务启动..."
-    wait_for_service "postgres" "pg_isready -U postgres" 120
+    wait_for_service "postgres" "pg_isready -U postgres" 300
+    
+    # 如果PostgreSQL启动失败，尝试重启
+    if [ $? -ne 0 ]; then
+        warning "PostgreSQL服务启动超时，尝试重启..."
+        docker restart "${CONTAINER_PREFIX}_postgres"
+        sleep 30
+        wait_for_service "postgres" "pg_isready -U postgres" 180
+    fi
 
     log "等待Redis服务启动..."
-    wait_for_service "redis" "redis-cli ping" 60
+    wait_for_service "redis" "redis-cli ping" 120
+    
+    # 如果Redis启动失败，尝试重启
+    if [ $? -ne 0 ]; then
+        warning "Redis服务启动超时，尝试重启..."
+        docker restart "${CONTAINER_PREFIX}_redis"
+        sleep 10
+        wait_for_service "redis" "redis-cli ping" 60
+    fi
 
     success "数据库服务启动完成"
 }

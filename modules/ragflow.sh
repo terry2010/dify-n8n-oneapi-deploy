@@ -147,10 +147,10 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9380 || curl -f http://localhost:80 || exit 1"]
-      interval: 30s
-      timeout: 30s
-      retries: 10
-      start_period: 300s
+      interval: 60s
+      timeout: 60s
+      retries: 20
+      start_period: 600s
     networks:
       - aiserver_network
 EOF
@@ -190,7 +190,7 @@ start_ragflow_services() {
     log "启动RAGFlow核心服务..."
     
     # 首先尝试启动，如果失败则重试
-    local max_retries=3
+    local max_retries=5
     local retry_count=0
     
     while [ $retry_count -lt $max_retries ]; do
@@ -213,7 +213,7 @@ start_ragflow_services() {
             # 等待服务就绪，使用更长的超时时间
             local service_ready=false
             local wait_time=0
-            local max_wait=600  # 10分钟
+            local max_wait=1200  # 20分钟
             
             while [ $wait_time -lt $max_wait ]; do
                 # 尝试多个健康检查端点
@@ -256,6 +256,13 @@ start_ragflow_services() {
     error "RAGFlow服务启动失败，已重试 $max_retries 次"
     log "最终错误日志:"
     docker logs "${CONTAINER_PREFIX}_ragflow" --tail 20 2>/dev/null || true
+    
+    # 创建一个空的RAGFlow容器，以便Nginx可以启动
+    # 这样即使RAGFlow服务未完全就绪，Nginx也能正常启动
+    if ! docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_ragflow"; then
+        warning "创建RAGFlow占位容器，以便Nginx可以正常启动..."
+        docker run -d --name "${CONTAINER_PREFIX}_ragflow" --network aiserver_network --restart always -e TZ=Asia/Shanghai --entrypoint "tail" infiniflow/ragflow:v0.7.0 -f /dev/null
+    fi
     
     # 即使RAGFlow启动失败，也继续安装流程，只是标记为警告
     warning "RAGFlow服务启动失败，但继续安装流程。可以稍后手动启动RAGFlow。"

@@ -39,6 +39,12 @@ check_service_running() {
     docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_${service_name}" 2>/dev/null
 }
 
+# 检查服务是否存在（包括未运行的容器）
+check_service_exists() {
+    local service_name="$1"
+    docker ps -a --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_${service_name}" 2>/dev/null
+}
+
 # 生成动态upstream配置
 generate_upstream_config() {
     local config=""
@@ -92,10 +98,16 @@ generate_safe_domain_nginx_config() {
     
     # 检查哪些服务正在运行
     local running_services=()
+    local existing_services=()
+    
     for service in "dify_api" "dify_web" "n8n" "oneapi" "ragflow"; do
         if check_service_running "$service"; then
             running_services+=("$service")
+            existing_services+=("$service")
             log "检测到运行中的服务: $service"
+        elif check_service_exists "$service"; then
+            existing_services+=("$service")
+            log "检测到存在但未运行的服务: $service"
         else
             log "服务未运行，将跳过: $service"
         fi
@@ -126,7 +138,7 @@ http {
 EOF
 
     # 添加动态upstream配置
-    for service in "${running_services[@]}"; do
+    for service in "${existing_services[@]}"; do
         case "$service" in
             "dify_api")
                 cat >> "$INSTALL_PATH/config/nginx.conf" << EOF
@@ -181,7 +193,7 @@ EOF
     done
     
     # 添加服务器配置
-    generate_server_configs "${running_services[@]}"
+    generate_server_configs "${existing_services[@]}"
     
     # 结束配置文件
     echo "}" >> "$INSTALL_PATH/config/nginx.conf"
@@ -285,7 +297,7 @@ EOF
     fi
     
     # RAGFlow服务器配置
-    if [[ " ${running_services[*]} " =~ " ragflow " ]]; then
+    if check_service_exists "ragflow"; then
         cat >> "$INSTALL_PATH/config/nginx.conf" << 'EOF'
 
     # RAGFlow服务器配置
@@ -300,6 +312,13 @@ EOF
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 300s;
+            proxy_read_timeout 300s;
+            proxy_send_timeout 300s;
+            
+            # 错误处理
+            proxy_intercept_errors on;
+            error_page 502 503 504 = @ragflow_error;
         }
 
         # 默认路径代理到Web服务
@@ -309,6 +328,18 @@ EOF
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 300s;
+            proxy_read_timeout 300s;
+            proxy_send_timeout 300s;
+            
+            # 错误处理
+            proxy_intercept_errors on;
+            error_page 502 503 504 = @ragflow_error;
+        }
+        
+        # RAGFlow错误处理
+        location @ragflow_error {
+            return 503 '<!DOCTYPE html><html><head><title>RAGFlow服务正在启动中</title><meta http-equiv="refresh" content="30"><style>body{font-family:Arial,sans-serif;line-height:1.6;max-width:800px;margin:0 auto;padding:20px}h1{color:#3498db}p{margin-bottom:15px}</style></head><body><h1>RAGFlow服务正在启动中</h1><p>RAGFlow服务需要较长时间启动，请耐心等待（通常需要5-10分钟）。</p><p>此页面将每30秒自动刷新一次。</p><p>如果长时间未启动，请检查服务器资源是否充足（建议至少8GB内存）。</p></body></html>';
         }
     }
 EOF
@@ -928,18 +959,52 @@ start_nginx_service() {
 
     cd "$INSTALL_PATH"
 
-    # 创建Docker网络（如果不存在）
+    # 确保网络存在
     docker network create aiserver_network 2>/dev/null || true
 
-    # 启动Nginx
-    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-nginx.yml up -d --remove-orphans nginx
-
-    # 检查Nginx状态
-    sleep 10
-    if docker ps --format "table {{.Names}}" | grep -q "${CONTAINER_PREFIX}_nginx"; then
+    # 启动Nginx服务
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-nginx.yml up -d --remove-orphans
+    
+    # 等待Nginx启动
+    local max_retries=5
+    local retry_count=0
+    local nginx_started=false
+    
+    while [ $retry_count -lt $max_retries ]; do
+        if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_nginx"; then
+            nginx_started=true
+            break
+        fi
+        
+        log "等待Nginx启动，重试 $((retry_count + 1))/$max_retries..."
+        sleep 10
+        retry_count=$((retry_count + 1))
+        
+        # 如果Nginx启动失败，检查日志
+        if [ $retry_count -eq 3 ]; then
+            log "Nginx启动可能遇到问题，检查日志..."
+            docker logs "${CONTAINER_PREFIX}_nginx" --tail 10 2>/dev/null || true
+        fi
+        
+        # 如果Nginx仍未启动，尝试重新启动
+        if [ $retry_count -eq $max_retries ]; then
+            log "尝试重新启动Nginx..."
+            docker stop "${CONTAINER_PREFIX}_nginx" 2>/dev/null || true
+            docker rm "${CONTAINER_PREFIX}_nginx" 2>/dev/null || true
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-nginx.yml up -d --remove-orphans
+            sleep 10
+            
+            if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_nginx"; then
+                nginx_started=true
+                break
+            fi
+        fi
+    done
+    
+    if [ "$nginx_started" = true ]; then
         success "Nginx服务启动完成"
     else
-        warning "Nginx服务可能启动失败，请检查配置和日志"
+        warning "Nginx服务启动可能存在问题，请检查日志"
     fi
 }
 
