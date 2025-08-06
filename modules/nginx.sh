@@ -222,9 +222,14 @@ generate_server_configs() {
         listen 80;
         server_name ${DIFY_DOMAIN};
 
-        # API路径代理
-        location /console/api/ {
-            proxy_pass http://dify_api_upstream/console/api/;
+        # 健康检查端点
+        location = /health {
+            access_log off;
+            return 200 "healthy\n";
+        }
+
+        location /files/ {
+            proxy_pass http://dify_api_upstream/files/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -232,15 +237,24 @@ generate_server_configs() {
         }
 
         location /api/ {
-            proxy_pass http://dify_api_upstream/api/;
+            proxy_pass http://dify_api_upstream/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        location /v1/ {
-            proxy_pass http://dify_api_upstream/v1/;
+        location = / {
+            # 直接返回首页，不进行302跳转
+            proxy_pass http://dify_web_upstream/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        
+        location / {
+            proxy_pass http://dify_web_upstream;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -431,23 +445,33 @@ http {
             add_header Access-Control-Allow-Origin * always;
             add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
             add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With" always;
-
-            if (\$request_method = 'OPTIONS') {
-                add_header Access-Control-Allow-Origin * always;
-                add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
-                add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With" always;
-                return 204;
-            }
         }
-
-        location /v1/ {
-            proxy_pass http://dify_api_upstream/v1/;
+        
+        location = / {
+            # 直接返回首页，不进行302跳转
+            proxy_pass http://dify_web_upstream/;
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto \$scheme;
         }
-
+        
+        location / {
+            proxy_pass http://dify_web_upstream;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+        }
+        
+        location /api/ {
+            proxy_pass http://dify_api_upstream/;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+        }
+        
         location /files/ {
             proxy_pass http://dify_api_upstream/files/;
             proxy_set_header Host \$host;
@@ -455,13 +479,6 @@ http {
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto \$scheme;
         }
-
-        location /api/ {
-            proxy_pass http://dify_api_upstream/;
-            proxy_set_header Host \$host;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$scheme;
         }
 
         location / {
@@ -1071,6 +1088,7 @@ generate_nginx_compose() {
         fi
     # IP模式或双模式需要映射所有服务端口
     else
+        # 主Nginx端口
         if [ "$DEPLOY_MODE" = "dual" ] && [ -n "$DOMAIN_PORT" ] && [ "$DOMAIN_PORT" != "80" ]; then
             port_mappings="      - \"${DOMAIN_PORT}:80\""
         else
