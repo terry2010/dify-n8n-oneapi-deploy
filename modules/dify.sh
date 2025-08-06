@@ -21,6 +21,12 @@ install_dify() {
 generate_dify_compose() {
     log "生成Dify配置..."
 
+    # 获取PostgreSQL和Redis容器IP地址
+    local POSTGRES_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${CONTAINER_PREFIX}_postgres 2>/dev/null || echo "172.21.0.2")
+    local REDIS_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${CONTAINER_PREFIX}_redis 2>/dev/null || echo "172.21.0.3")
+    log "PostgreSQL IP地址: $POSTGRES_IP"
+    log "Redis IP地址: $REDIS_IP"
+
     cat > "$INSTALL_PATH/docker-compose-dify.yml" << EOF
 version: '3.8'
 
@@ -37,7 +43,7 @@ services:
     environment:
       API_KEY: dify-sandbox
       GIN_MODE: release
-      WORKER_TIMEOUT: "15"
+      WORKER_TIMEOUT: "30"
       ENABLE_NETWORK: "true"
       SANDBOX_PORT: "8194"
     volumes:
@@ -45,9 +51,9 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8194/health"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      timeout: 30s
+      retries: 10
+      start_period: 60s
     networks:
       - aiserver_network
 
@@ -58,18 +64,27 @@ services:
     restart: always
     environment:
       MODE: api
-      LOG_LEVEL: INFO
+      LOG_LEVEL: DEBUG
       SECRET_KEY: dify-secret-key-random123456
+      # 使用IP地址而非容器名
       DB_USERNAME: postgres
       DB_PASSWORD: "${DB_PASSWORD}"
-      DB_HOST: ${CONTAINER_PREFIX}_postgres
+      DB_HOST: $POSTGRES_IP
       DB_PORT: "5432"
       DB_DATABASE: dify
-      REDIS_HOST: ${CONTAINER_PREFIX}_redis
+      # Redis配置使用IP地址
+      REDIS_HOST: $REDIS_IP
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
-      CELERY_BROKER_URL: "redis://${CONTAINER_PREFIX}_redis:6379/1"
+      CELERY_BROKER_URL: "redis://$REDIS_IP:6379/1"
+      # 增加数据库连接重试配置
+      DB_POOL_RECYCLE: "3600"
+      DB_POOL_SIZE: "20"
+      DB_MAX_OVERFLOW: "10"
+      DB_POOL_TIMEOUT: "60"
+      DB_POOL_PRE_PING: "true"
+      # 其他配置
       WEB_API_CORS_ALLOW_ORIGINS: "*"
       CONSOLE_CORS_ALLOW_ORIGINS: "*"
       STORAGE_TYPE: local
@@ -94,9 +109,9 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 120s
+      timeout: 30s
+      retries: 10
+      start_period: 180s
     networks:
       - aiserver_network
 
@@ -107,18 +122,27 @@ services:
     restart: always
     environment:
       MODE: worker
-      LOG_LEVEL: INFO
+      LOG_LEVEL: DEBUG
       SECRET_KEY: dify-secret-key-random123456
+      # 使用IP地址而非容器名
       DB_USERNAME: postgres
       DB_PASSWORD: "${DB_PASSWORD}"
-      DB_HOST: ${CONTAINER_PREFIX}_postgres
+      DB_HOST: $POSTGRES_IP
       DB_PORT: "5432"
       DB_DATABASE: dify
-      REDIS_HOST: ${CONTAINER_PREFIX}_redis
+      # Redis配置使用IP地址
+      REDIS_HOST: $REDIS_IP
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
-      CELERY_BROKER_URL: "redis://${CONTAINER_PREFIX}_redis:6379/1"
+      CELERY_BROKER_URL: "redis://$REDIS_IP:6379/1"
+      # 增加数据库连接重试配置
+      DB_POOL_RECYCLE: "3600"
+      DB_POOL_SIZE: "20"
+      DB_MAX_OVERFLOW: "10"
+      DB_POOL_TIMEOUT: "60"
+      DB_POOL_PRE_PING: "true"
+      # 其他配置
       STORAGE_TYPE: local
       CODE_EXECUTION_ENDPOINT: "http://${CONTAINER_PREFIX}_dify_sandbox:8194"
       CODE_EXECUTION_API_KEY: dify-sandbox
@@ -147,9 +171,9 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      timeout: 30s
+      retries: 10
+      start_period: 120s
     networks:
       - aiserver_network
 EOF
@@ -162,18 +186,69 @@ start_dify_services() {
     log "启动Dify服务..."
 
     cd "$INSTALL_PATH"
+    
+    # 检查数据库和Redis服务是否已启动
+    log "检查PostgreSQL和Redis服务..."
+    if ! docker exec ${CONTAINER_PREFIX}_postgres pg_isready -U postgres &>/dev/null; then
+        warning "PostgreSQL服务未就绪，尝试重启..."
+        docker restart ${CONTAINER_PREFIX}_postgres
+        sleep 10
+        wait_for_service "postgres" "pg_isready -U postgres" 120
+    fi
+    
+    if ! docker exec ${CONTAINER_PREFIX}_redis redis-cli ping &>/dev/null; then
+        warning "Redis服务未就绪，尝试重启..."
+        docker restart ${CONTAINER_PREFIX}_redis
+        sleep 10
+        wait_for_service "redis" "redis-cli ping" 60
+    fi
+    
+    # 创建Dify数据库（如果不存在）
+    log "确保Dify数据库存在..."
+    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "SELECT 1 FROM pg_database WHERE datname = 'dify';" | grep -q 1 || \
+    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "CREATE DATABASE dify WITH ENCODING 'UTF8' LC_COLLATE='en_US.utf8' LC_CTYPE='en_US.utf8';" 2>/dev/null
 
     # 先启动Sandbox
+    log "启动Dify Sandbox..."
     COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_sandbox
-    wait_for_service "dify_sandbox" "curl -f http://localhost:8194/health" 60
+    wait_for_service "dify_sandbox" "curl -f http://localhost:8194/health" 90
+    
+    # 如果Sandbox启动失败，尝试重启
+    if [ $? -ne 0 ]; then
+        warning "Dify Sandbox启动超时，尝试重启..."
+        docker restart ${CONTAINER_PREFIX}_dify_sandbox
+        sleep 20
+        wait_for_service "dify_sandbox" "curl -f http://localhost:8194/health" 60
+    fi
 
     # 启动API和Worker
+    log "启动Dify API和Worker..."
     COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d dify_api dify_worker
-    wait_for_service "dify_api" "curl -f http://localhost:5001/health" 120
+    wait_for_service "dify_api" "curl -f http://localhost:5001/health" 180
+    
+    # 如果API启动失败，尝试重启
+    if [ $? -ne 0 ]; then
+        warning "Dify API启动超时，尝试重启..."
+        docker restart ${CONTAINER_PREFIX}_dify_api ${CONTAINER_PREFIX}_dify_worker
+        sleep 30
+        wait_for_service "dify_api" "curl -f http://localhost:5001/health" 120
+    fi
+    
+    # 检查API日志
+    log "检查Dify API日志..."
+    docker logs ${CONTAINER_PREFIX}_dify_api --tail 20
 
     # 启动Web服务
+    log "启动Dify Web服务..."
     COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d dify_web
-    sleep 15
+    sleep 30
+    
+    # 检查Web服务是否启动
+    if ! docker ps | grep -q ${CONTAINER_PREFIX}_dify_web; then
+        warning "Dify Web服务启动失败，尝试重启..."
+        docker restart ${CONTAINER_PREFIX}_dify_web
+        sleep 20
+    fi
 
     success "Dify服务启动完成"
 }

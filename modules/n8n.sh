@@ -21,6 +21,10 @@ install_n8n() {
 generate_n8n_compose() {
     log "生成n8n配置..."
 
+    # 获取PostgreSQL容器IP地址，避免使用容器名称
+    local POSTGRES_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${CONTAINER_PREFIX}_postgres 2>/dev/null || echo "172.21.0.2")
+    log "PostgreSQL IP地址: $POSTGRES_IP"
+
     cat > "$INSTALL_PATH/docker-compose-n8n.yml" << EOF
 version: '3.8'
 
@@ -35,13 +39,19 @@ services:
     container_name: ${CONTAINER_PREFIX}_n8n
     restart: always
     environment:
+      # 使用IP地址而不是容器名称
       DB_TYPE: postgresdb
       DB_POSTGRESDB_DATABASE: n8n
-      DB_POSTGRESDB_HOST: ${CONTAINER_PREFIX}_postgres
+      DB_POSTGRESDB_HOST: $POSTGRES_IP
       DB_POSTGRESDB_PORT: "5432"
       DB_POSTGRESDB_USER: postgres
       DB_POSTGRESDB_SCHEMA: public
       DB_POSTGRESDB_PASSWORD: "${DB_PASSWORD}"
+      # 添加额外的数据库连接重试配置
+      DB_POSTGRESDB_CONNECTION_TIMEOUT: 60000
+      DB_POSTGRESDB_MAX_CONNECTIONS: 10
+      DB_POSTGRESDB_MIN_CONNECTIONS: 1
+      # 基本配置
       N8N_HOST: "0.0.0.0"
       N8N_PORT: "5678"$(if [ "$USE_DOMAIN" = true ]; then
         if [ "$NGINX_PORT" = "443" ]; then
@@ -67,7 +77,7 @@ services:
       N8N_METRICS: "true"
       EXECUTIONS_PROCESS: main
       EXECUTIONS_MODE: regular
-      N8N_LOG_LEVEL: info
+      N8N_LOG_LEVEL: debug
       N8N_PERSONALIZATION_ENABLED: "false"
       N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
       N8N_DIAGNOSTICS_ENABLED: "false"
@@ -84,9 +94,9 @@ services:
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5678/healthz"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      timeout: 30s
+      retries: 10
+      start_period: 120s
     networks:
       - aiserver_network
 EOF
@@ -103,10 +113,39 @@ start_n8n_services() {
     # 确保n8n数据目录权限正确
     ensure_directory "$INSTALL_PATH/volumes/n8n/data" "1000:1000" "755"
 
-    # 启动n8n服务
-    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-n8n.yml up -d --remove-orphans n8n
-    wait_for_service "n8n" "wget --quiet --tries=1 --spider http://localhost:5678/healthz" 60
+    # 确保PostgreSQL服务已启动并可访问
+    log "检查PostgreSQL服务是否可用..."
+    if ! docker exec ${CONTAINER_PREFIX}_postgres pg_isready -U postgres &>/dev/null; then
+        warning "PostgreSQL服务未就绪，尝试重启..."
+        docker restart ${CONTAINER_PREFIX}_postgres
+        sleep 10
+        wait_for_service "postgres" "pg_isready -U postgres" 120
+    fi
 
+    # 创建n8n数据库（如果不存在）
+    log "确保n8n数据库存在..."
+    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "SELECT 1 FROM pg_database WHERE datname = 'n8n';" | grep -q 1 || \
+    docker exec ${CONTAINER_PREFIX}_postgres psql -U postgres -c "CREATE DATABASE n8n WITH ENCODING 'UTF8' LC_COLLATE='en_US.utf8' LC_CTYPE='en_US.utf8';" 2>/dev/null
+
+    # 启动n8n服务
+    log "启动n8n服务..."
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-n8n.yml up -d --remove-orphans n8n
+    
+    # 增加等待时间和重试次数
+    wait_for_service "n8n" "wget --quiet --tries=1 --spider http://localhost:5678/healthz" 180
+    
+    # 如果服务启动失败，尝试重启
+    if [ $? -ne 0 ]; then
+        warning "n8n服务启动超时，尝试重启..."
+        docker restart ${CONTAINER_PREFIX}_n8n
+        sleep 30
+        wait_for_service "n8n" "wget --quiet --tries=1 --spider http://localhost:5678/healthz" 120
+    fi
+    
+    # 检查n8n容器日志
+    log "检查n8n容器日志..."
+    docker logs ${CONTAINER_PREFIX}_n8n --tail 20
+    
     success "n8n服务启动完成"
 }
 
