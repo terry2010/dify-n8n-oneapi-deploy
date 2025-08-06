@@ -94,7 +94,7 @@ start_oneapi_services() {
 
     # 启动OneAPI服务
     log "启动OneAPI服务..."
-    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-oneapi.yml up -d --remove-orphans oneapi
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-oneapi.yml up -d  oneapi
     sleep 30
     
     # 检查服务状态

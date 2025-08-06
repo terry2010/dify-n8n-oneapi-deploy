@@ -172,12 +172,12 @@ start_ragflow_services() {
 
     # 先启动Elasticsearch
     log "启动Elasticsearch服务..."
-    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d --remove-orphans elasticsearch
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d  elasticsearch
     wait_for_service "elasticsearch" "curl -f http://localhost:9200/_cluster/health" 120
 
     # 启动MinIO
     log "启动MinIO服务..."
-    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d --remove-orphans minio
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d  minio
     wait_for_service "minio" "curl -f http://localhost:9000/minio/health/live" 60
 
     # 初始化MinIO存储桶
@@ -201,7 +201,7 @@ start_ragflow_services() {
         docker rm "${CONTAINER_PREFIX}_ragflow" 2>/dev/null || true
         
         # 启动RAGFlow服务
-        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d --remove-orphans ragflow
+        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d  ragflow
         
         # 等待容器启动
         sleep 30

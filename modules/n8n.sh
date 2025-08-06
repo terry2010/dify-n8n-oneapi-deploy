@@ -129,7 +129,7 @@ start_n8n_services() {
 
     # 启动n8n服务
     log "启动n8n服务..."
-    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-n8n.yml up -d --remove-orphans n8n
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-n8n.yml up -d  n8n
     
     # 增加等待时间和重试次数
     wait_for_service "n8n" "wget --quiet --tries=1 --spider http://localhost:5678/healthz" 180

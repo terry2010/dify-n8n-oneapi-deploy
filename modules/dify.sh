@@ -210,7 +210,7 @@ start_dify_services() {
 
     # 先启动Sandbox
     log "启动Dify Sandbox..."
-    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_sandbox
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d  dify_sandbox
     wait_for_service "dify_sandbox" "curl -f http://localhost:8194/health" 90
     
     # 如果Sandbox启动失败，尝试重启

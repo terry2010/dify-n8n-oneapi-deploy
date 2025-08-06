@@ -963,7 +963,7 @@ start_nginx_service() {
     docker network create aiserver_network 2>/dev/null || true
 
     # 启动Nginx服务
-    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-nginx.yml up -d --remove-orphans
+    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-nginx.yml up -d
     
     # 等待Nginx启动
     local max_retries=5
@@ -991,7 +991,7 @@ start_nginx_service() {
             log "尝试重新启动Nginx..."
             docker stop "${CONTAINER_PREFIX}_nginx" 2>/dev/null || true
             docker rm "${CONTAINER_PREFIX}_nginx" 2>/dev/null || true
-            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-nginx.yml up -d --remove-orphans
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-nginx.yml up -d
             sleep 10
             
             if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_nginx"; then

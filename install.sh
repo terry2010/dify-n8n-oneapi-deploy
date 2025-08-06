@@ -144,7 +144,7 @@ start_all_services() {
     # 第一步：启动基础服务并确保它们完全就绪
     log "第一步：启动基础服务（数据库、Redis）..."
     if [ -f "docker-compose-db.yml" ]; then
-        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-db.yml up -d --remove-orphans
+        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-db.yml up -d
         
         # 增加初始等待时间，让服务有时间启动
         log "等待基础服务初始化（60秒）..."
@@ -212,7 +212,7 @@ start_all_services() {
             log "PostgreSQL容器IP: $POSTGRES_IP"
             
             # 启动n8n服务
-            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-n8n.yml up -d --remove-orphans
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-n8n.yml up -d
             log "等待n8n服务就绪..."
             wait_for_service "n8n" "wget --quiet --tries=1 --spider http://localhost:5678/healthz" 120
         else
@@ -232,15 +232,15 @@ start_all_services() {
             log "PostgreSQL容器IP: $POSTGRES_IP, Redis容器IP: $REDIS_IP"
             
             # 分步启动Dify服务
-            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_sandbox
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d dify_sandbox
             log "等待Dify Sandbox就绪..."
             wait_for_service "dify_sandbox" "curl -f http://localhost:8194/health" 120
 
-            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_api dify_worker
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d dify_api dify_worker
             log "等待Dify API就绪..."
             wait_for_service "dify_api" "curl -f http://localhost:5001/health" 180
 
-            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_web
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d dify_web
             log "等待Dify Web就绪..."
             sleep 30
         else
@@ -260,7 +260,7 @@ start_all_services() {
             log "PostgreSQL容器IP: $POSTGRES_IP, Redis容器IP: $REDIS_IP"
             
             # 启动OneAPI服务
-            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-oneapi.yml up -d --remove-orphans
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-oneapi.yml up -d
             log "等待OneAPI服务就绪..."
             sleep 60
         else
