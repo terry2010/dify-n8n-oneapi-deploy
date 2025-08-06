@@ -141,64 +141,165 @@ start_all_services() {
     # 创建Docker网络
     docker network create aiserver_network 2>/dev/null || true
 
-    # 分步启动服务
-    log "启动基础服务..."
+    # 第一步：启动基础服务并确保它们完全就绪
+    log "第一步：启动基础服务（数据库、Redis）..."
     if [ -f "docker-compose-db.yml" ]; then
         COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-db.yml up -d --remove-orphans
-        sleep 45
+        
+        # 增加初始等待时间，让服务有时间启动
+        log "等待基础服务初始化（60秒）..."
+        sleep 60
 
         # 等待数据库服务完全启动（增加超时时间）
-        log "MySQL服务可能需要更长时间初始化，设置超时时间为180秒"
-        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 180
-        wait_for_service "postgres" "pg_isready -U postgres" 60
-        wait_for_service "redis" "redis-cli ping" 30
+        log "检查MySQL服务就绪状态，设置超时时间为240秒"
+        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 240
+        
+        log "检查PostgreSQL服务就绪状态"
+        wait_for_service "postgres" "pg_isready -U postgres" 120
+        
+        log "检查Redis服务就绪状态"
+        wait_for_service "redis" "redis-cli ping" 60
 
         # 初始化数据库
+        log "初始化数据库..."
         source "$SCRIPT_DIR/modules/database.sh"
         initialize_databases
+        
+        # 再次确认数据库服务状态
+        log "再次确认数据库服务状态..."
+        if ! docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_mysql"; then
+            warning "MySQL容器不存在，尝试重新启动..."
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-db.yml up -d mysql
+            sleep 30
+        fi
+        
+        if ! docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres"; then
+            warning "PostgreSQL容器不存在，尝试重新启动..."
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-db.yml up -d postgres
+            sleep 30
+        fi
+        
+        if ! docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_redis"; then
+            warning "Redis容器不存在，尝试重新启动..."
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-db.yml up -d redis
+            sleep 30
+        fi
     fi
 
-    log "启动应用服务..."
+    # 第二步：启动Elasticsearch和MinIO（RAGFlow依赖）
+    log "第二步：启动Elasticsearch和MinIO服务..."
+    if [ -f "docker-compose-ragflow.yml" ]; then
+        # 提取并单独启动Elasticsearch和MinIO
+        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d elasticsearch
+        log "等待Elasticsearch服务就绪..."
+        wait_for_service "elasticsearch" "curl -s -f http://localhost:9200/_cluster/health" 180
+        
+        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d minio
+        log "等待MinIO服务就绪..."
+        sleep 60  # MinIO需要时间初始化
+    fi
 
-    # 启动OneAPI
-    if [ -f "docker-compose-oneapi.yml" ]; then
-        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-oneapi.yml up -d --remove-orphans
-        sleep 15
+    # 第三步：按顺序启动应用服务
+    log "第三步：按顺序启动应用服务..."
+
+    # 启动n8n服务
+    if [ -f "docker-compose-n8n.yml" ]; then
+        log "启动n8n服务..."
+        # 确保PostgreSQL容器存在并运行
+        if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres"; then
+            # 获取PostgreSQL容器IP
+            local POSTGRES_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${CONTAINER_PREFIX}_postgres 2>/dev/null | tr -d '[:space:]')
+            log "PostgreSQL容器IP: $POSTGRES_IP"
+            
+            # 启动n8n服务
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-n8n.yml up -d --remove-orphans
+            log "等待n8n服务就绪..."
+            wait_for_service "n8n" "wget --quiet --tries=1 --spider http://localhost:5678/healthz" 120
+        else
+            warning "PostgreSQL容器不存在，跳过n8n启动"
+        fi
     fi
 
     # 启动Dify服务
     if [ -f "docker-compose-dify.yml" ]; then
-        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_sandbox
-        wait_for_service "dify_sandbox" "curl -f http://localhost:8194/health" 60
-
-        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_api dify_worker
-        wait_for_service "dify_api" "curl -f http://localhost:5001/health" 60
-
-        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_web
-        sleep 15
-    fi
-
-    # 启动n8n
-    if [ -f "docker-compose-n8n.yml" ]; then
-        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-n8n.yml up -d --remove-orphans
-        wait_for_service "n8n" "wget --quiet --tries=1 --spider http://localhost:5678/healthz" 60
-    fi
-
-    # 启动RAGFlow服务
-    if [ -f "docker-compose-ragflow.yml" ]; then
-        log "启动RAGFlow服务（这可能需要较长时间）..."
-        
-        # 使用改进的RAGFlow启动函数
-        source "$SCRIPT_DIR/modules/ragflow.sh"
-        
-        # 尝试启动RAGFlow，如果失败则记录但不中断整个安装流程
-        if start_ragflow_services; then
-            success "RAGFlow服务启动成功"
-        else
-            warning "RAGFlow服务启动失败，但继续安装流程"
-            warning "可以稍后使用 ./fix_ragflow_startup.sh 脚本修复"
+        log "启动Dify服务..."
+        # 确保PostgreSQL和Redis容器存在并运行
+        if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres" && \
+           docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_redis"; then
+            # 获取容器IP
+            local POSTGRES_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${CONTAINER_PREFIX}_postgres 2>/dev/null | tr -d '[:space:]')
+            local REDIS_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${CONTAINER_PREFIX}_redis 2>/dev/null | tr -d '[:space:]')
+            log "PostgreSQL容器IP: $POSTGRES_IP, Redis容器IP: $REDIS_IP"
             
-            # 记录失败状态，稍后在Nginx配置中跳过RAGFlow
+            # 分步启动Dify服务
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_sandbox
+            log "等待Dify Sandbox就绪..."
+            wait_for_service "dify_sandbox" "curl -f http://localhost:8194/health" 120
+
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_api dify_worker
+            log "等待Dify API就绪..."
+            wait_for_service "dify_api" "curl -f http://localhost:5001/health" 180
+
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_web
+            log "等待Dify Web就绪..."
+            sleep 30
+        else
+            warning "PostgreSQL或Redis容器不存在，跳过Dify启动"
+        fi
+    fi
+
+    # 启动OneAPI服务
+    if [ -f "docker-compose-oneapi.yml" ]; then
+        log "启动OneAPI服务..."
+        # 确保PostgreSQL和Redis容器存在并运行
+        if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_postgres" && \
+           docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_redis"; then
+            # 获取容器IP
+            local POSTGRES_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${CONTAINER_PREFIX}_postgres 2>/dev/null | tr -d '[:space:]')
+            local REDIS_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${CONTAINER_PREFIX}_redis 2>/dev/null | tr -d '[:space:]')
+            log "PostgreSQL容器IP: $POSTGRES_IP, Redis容器IP: $REDIS_IP"
+            
+            # 启动OneAPI服务
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-oneapi.yml up -d --remove-orphans
+            log "等待OneAPI服务就绪..."
+            sleep 60
+        else
+            warning "PostgreSQL或Redis容器不存在，跳过OneAPI启动"
+        fi
+    fi
+
+    # 启动RAGFlow核心服务
+    if [ -f "docker-compose-ragflow.yml" ]; then
+        log "启动RAGFlow核心服务（这可能需要较长时间）..."
+        
+        # 确保Elasticsearch和MinIO容器存在并运行
+        if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_elasticsearch" && \
+           docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_minio"; then
+            # 使用改进的RAGFlow启动函数
+            source "$SCRIPT_DIR/modules/ragflow.sh"
+            
+            # 初始化MinIO存储桶
+            initialize_minio_bucket
+            
+            # 初始化RAGFlow数据库
+            initialize_ragflow_database
+            
+            # 启动RAGFlow核心服务
+            log "启动RAGFlow核心服务..."
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d ragflow
+            
+            # 等待RAGFlow服务就绪
+            log "RAGFlow容器已启动，等待服务就绪..."
+            wait_for_service "ragflow" "curl -s -f http://localhost:80/health" 300
+            
+            if [ $? -eq 0 ]; then
+                success "RAGFlow服务启动成功"
+            else
+                warning "RAGFlow服务启动超时，但继续安装流程"
+                export RAGFLOW_FAILED=true
+            fi
+        else
+            warning "Elasticsearch或MinIO容器不存在，跳过RAGFlow核心服务启动"
             export RAGFLOW_FAILED=true
         fi
     fi
@@ -207,27 +308,23 @@ start_all_services() {
     if [ -f "docker-compose-nginx.yml" ]; then
         log "启动Nginx服务..."
         
-        # 如果RAGFlow启动失败，重新生成安全的Nginx配置
-        if [ "$RAGFLOW_FAILED" = "true" ]; then
-            warning "RAGFlow服务未运行，生成安全的Nginx配置..."
-            source "$SCRIPT_DIR/modules/nginx.sh"
-            generate_safe_domain_nginx_config
-        fi
+        # 检查各服务状态，生成适当的Nginx配置
+        source "$SCRIPT_DIR/modules/nginx.sh"
+        generate_safe_domain_nginx_config
         
         # 启动Nginx容器
         if COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-nginx.yml up -d; then
-            sleep 10
+            sleep 15
             
             # 检查Nginx是否正常启动
             if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_nginx"; then
                 success "Nginx服务启动成功"
             else
                 error "Nginx容器启动失败"
-                docker logs "${CONTAINER_PREFIX}_nginx" --tail 10 2>/dev/null || true
+                docker logs "${CONTAINER_PREFIX}_nginx" --tail 20 2>/dev/null || true
             fi
         else
             error "Nginx服务启动失败"
-            warning "可以使用 ./quick_fix_nginx.sh 脚本修复"
         fi
     fi
 

@@ -21,11 +21,10 @@ install_oneapi() {
 generate_oneapi_compose() {
     log "生成OneAPI配置..."
 
-    # 获取PostgreSQL和Redis容器IP地址
-    local POSTGRES_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${CONTAINER_PREFIX}_postgres 2>/dev/null || echo "172.21.0.2")
-    local REDIS_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${CONTAINER_PREFIX}_redis 2>/dev/null || echo "172.21.0.3")
-    log "PostgreSQL IP地址: $POSTGRES_IP"
-    log "Redis IP地址: $REDIS_IP"
+    # 获取PostgreSQL和Redis容器IP地址 - 确保去除空格
+    local POSTGRES_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${CONTAINER_PREFIX}_postgres 2>/dev/null | tr -d '[:space:]' || echo "172.21.0.2")
+    local REDIS_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${CONTAINER_PREFIX}_redis 2>/dev/null | tr -d '[:space:]' || echo "172.21.0.3")
+    log "数据库连接信息 - PostgreSQL IP: $POSTGRES_IP, Redis IP: $REDIS_IP"
 
     cat > "$INSTALL_PATH/docker-compose-oneapi.yml" << EOF
 version: '3.8'
@@ -43,9 +42,9 @@ services:
     ports:
       - \"${ONEAPI_WEB_PORT}:3000\"")
     environment:
-      # 使用IP地址而非容器名
-      SQL_DSN: "postgres://postgres:${DB_PASSWORD}@$POSTGRES_IP:5432/oneapi?sslmode=disable"
-      REDIS_CONN_STRING: "redis://$REDIS_IP:6379"
+      # 使用IP地址而非容器名，确保无空格
+      SQL_DSN: "postgres://postgres:${DB_PASSWORD}@${POSTGRES_IP}:5432/oneapi?sslmode=disable"
+      REDIS_CONN_STRING: "redis://${REDIS_IP}:6379"
       SESSION_SECRET: "oneapi-session-secret-random123456"
       TZ: "Asia/Shanghai"
       # 增加调试日志
@@ -54,11 +53,11 @@ services:
       - ./volumes/oneapi/data:/data
       - ./logs:/app/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health" || exit 1]
       interval: 30s
       timeout: 30s
-      retries: 10
-      start_period: 120s
+      retries: 15
+      start_period: 180s
     networks:
       - aiserver_network
 EOF
