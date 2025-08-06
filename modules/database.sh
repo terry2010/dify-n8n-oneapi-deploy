@@ -222,7 +222,6 @@ EOF
     
     success "MySQL数据目录检查和修复完成"
 }
-}
 
 # 启动数据库服务
 start_database_services() {

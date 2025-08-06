@@ -74,7 +74,7 @@ remove_containers() {
 
 # 删除所有镜像
 remove_images() {
-     log "不自动删除镜像， 想删的话手工 docker rmi -f 镜像名"
+       log "不自动删除镜像， 想删的话手工 docker rmi -f 镜像名"
 
 #    log "删除所有相关镜像..."
 #
@@ -88,7 +88,7 @@ remove_images() {
 #    else
 #        log "未找到相关镜像"
 #    fi
-#}
+}
 
 # 删除数据卷
 remove_volumes() {
@@ -166,5 +166,3 @@ main() {
 
 # 执行主函数
 main
-
-}
