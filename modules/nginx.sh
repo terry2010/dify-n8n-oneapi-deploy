@@ -435,6 +435,13 @@ http {
         listen 80;
         server_name ${DIFY_DOMAIN};
 
+        # 健康检查端点
+        location = /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+
         # API路径代理
         location /console/api/ {
             proxy_pass http://dify_api_upstream/console/api/;
@@ -474,15 +481,6 @@ http {
         
         location /files/ {
             proxy_pass http://dify_api_upstream/files/;
-            proxy_set_header Host \$host;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$scheme;
-        }
-        }
-
-        location / {
-            proxy_pass http://dify_web_upstream;
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
