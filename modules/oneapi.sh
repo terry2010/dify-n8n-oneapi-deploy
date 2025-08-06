@@ -53,7 +53,7 @@ services:
       - ./volumes/oneapi/data:/data
       - ./logs:/app/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health" || exit 1]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
       timeout: 30s
       retries: 15
