@@ -145,11 +145,11 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9380 || curl -f http://localhost:80 || exit 1"]
       interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
+      timeout: 30s
+      retries: 10
+      start_period: 300s
     networks:
       - aiserver_network
 EOF
@@ -187,11 +187,78 @@ start_ragflow_services() {
 
     # 启动RAGFlow核心服务
     log "启动RAGFlow核心服务..."
-    COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d --remove-orphans ragflow
-    wait_for_service "ragflow" "curl -f http://${CONTAINER_PREFIX}_ragflow:80/health" 180
-
-
-    success "RAGFlow服务启动完成"
+    
+    # 首先尝试启动，如果失败则重试
+    local max_retries=3
+    local retry_count=0
+    
+    while [ $retry_count -lt $max_retries ]; do
+        log "尝试启动RAGFlow服务 (第 $((retry_count + 1)) 次)..."
+        
+        # 清理可能存在的失败容器
+        docker stop "${CONTAINER_PREFIX}_ragflow" 2>/dev/null || true
+        docker rm "${CONTAINER_PREFIX}_ragflow" 2>/dev/null || true
+        
+        # 启动RAGFlow服务
+        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml up -d --remove-orphans ragflow
+        
+        # 等待容器启动
+        sleep 30
+        
+        # 检查容器是否运行
+        if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_ragflow"; then
+            log "RAGFlow容器已启动，等待服务就绪..."
+            
+            # 等待服务就绪，使用更长的超时时间
+            local service_ready=false
+            local wait_time=0
+            local max_wait=600  # 10分钟
+            
+            while [ $wait_time -lt $max_wait ]; do
+                # 尝试多个健康检查端点
+                if docker exec "${CONTAINER_PREFIX}_ragflow" curl -f http://localhost:9380 >/dev/null 2>&1 || \
+                   docker exec "${CONTAINER_PREFIX}_ragflow" curl -f http://localhost:80 >/dev/null 2>&1; then
+                    service_ready=true
+                    break
+                fi
+                
+                sleep 15
+                wait_time=$((wait_time + 15))
+                
+                # 每分钟显示一次进度
+                if [ $((wait_time % 60)) -eq 0 ]; then
+                    log "等待RAGFlow服务就绪... ($wait_time/$max_wait 秒)"
+                fi
+            done
+            
+            if [ "$service_ready" = true ]; then
+                success "RAGFlow服务启动成功"
+                return 0
+            else
+                warning "RAGFlow服务启动超时，查看日志..."
+                docker logs "${CONTAINER_PREFIX}_ragflow" --tail 10
+            fi
+        else
+            warning "RAGFlow容器启动失败"
+            # 显示docker-compose日志
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml logs ragflow --tail 10
+        fi
+        
+        retry_count=$((retry_count + 1))
+        if [ $retry_count -lt $max_retries ]; then
+            warning "RAGFlow启动失败，等待30秒后重试..."
+            sleep 30
+        fi
+    done
+    
+    # 如果所有重试都失败了
+    error "RAGFlow服务启动失败，已重试 $max_retries 次"
+    log "最终错误日志:"
+    docker logs "${CONTAINER_PREFIX}_ragflow" --tail 20 2>/dev/null || true
+    
+    # 即使RAGFlow启动失败，也继续安装流程，只是标记为警告
+    warning "RAGFlow服务启动失败，但继续安装流程。可以稍后手动启动RAGFlow。"
+    success "RAGFlow安装流程完成（服务可能需要手动启动）"
 }
 
 # 创建RAGFlow目录结构

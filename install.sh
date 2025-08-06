@@ -186,29 +186,48 @@ start_all_services() {
     # 启动RAGFlow服务
     if [ -f "docker-compose-ragflow.yml" ]; then
         log "启动RAGFlow服务（这可能需要较长时间）..."
-
-        # 先启动Elasticsearch
-        docker-compose -f docker-compose-ragflow.yml up -d elasticsearch
-        wait_for_service "elasticsearch" "curl -f http://localhost:9200/_cluster/health" 120
-
-        # 启动MinIO
-        docker-compose -f docker-compose-ragflow.yml up -d minio
-        wait_for_service "minio" "curl -f http://localhost:9000/minio/health/live" 60
-
-        # 初始化MinIO和数据库
+        
+        # 使用改进的RAGFlow启动函数
         source "$SCRIPT_DIR/modules/ragflow.sh"
-        initialize_minio_buckets
-        initialize_ragflow_database
-
-        # 启动RAGFlow核心服务
-        docker-compose -f docker-compose-ragflow.yml up -d ragflow
-        wait_for_service "ragflow" "curl -f http://localhost:80/health" 180
+        
+        # 尝试启动RAGFlow，如果失败则记录但不中断整个安装流程
+        if start_ragflow_services; then
+            success "RAGFlow服务启动成功"
+        else
+            warning "RAGFlow服务启动失败，但继续安装流程"
+            warning "可以稍后使用 ./fix_ragflow_startup.sh 脚本修复"
+            
+            # 记录失败状态，稍后在Nginx配置中跳过RAGFlow
+            export RAGFLOW_FAILED=true
+        fi
     fi
 
     # 最后启动Nginx
     if [ -f "docker-compose-nginx.yml" ]; then
-        docker-compose -f docker-compose-nginx.yml up -d
-        sleep 10
+        log "启动Nginx服务..."
+        
+        # 如果RAGFlow启动失败，重新生成安全的Nginx配置
+        if [ "$RAGFLOW_FAILED" = "true" ]; then
+            warning "RAGFlow服务未运行，生成安全的Nginx配置..."
+            source "$SCRIPT_DIR/modules/nginx.sh"
+            generate_safe_domain_nginx_config
+        fi
+        
+        # 启动Nginx容器
+        if COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-nginx.yml up -d; then
+            sleep 10
+            
+            # 检查Nginx是否正常启动
+            if docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_nginx"; then
+                success "Nginx服务启动成功"
+            else
+                error "Nginx容器启动失败"
+                docker logs "${CONTAINER_PREFIX}_nginx" --tail 10 2>/dev/null || true
+            fi
+        else
+            error "Nginx服务启动失败"
+            warning "可以使用 ./quick_fix_nginx.sh 脚本修复"
+        fi
     fi
 
     success "所有服务启动完成"

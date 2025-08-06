@@ -33,8 +33,297 @@ generate_nginx_config() {
     success "Nginx配置文件生成完成"
 }
 
+# 检查服务是否运行
+check_service_running() {
+    local service_name="$1"
+    docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}_${service_name}" 2>/dev/null
+}
+
+# 生成动态upstream配置
+generate_upstream_config() {
+    local config=""
+    
+    # 检查并生成每个服务的upstream
+    if check_service_running "dify_api"; then
+        config="$config
+    upstream dify_api_upstream {
+        server ${CONTAINER_PREFIX}_dify_api:5001;
+    }"
+    fi
+    
+    if check_service_running "dify_web"; then
+        config="$config
+    upstream dify_web_upstream {
+        server ${CONTAINER_PREFIX}_dify_web:3000;
+    }"
+    fi
+    
+    if check_service_running "n8n"; then
+        config="$config
+    upstream n8n_upstream {
+        server ${CONTAINER_PREFIX}_n8n:5678;
+    }"
+    fi
+    
+    if check_service_running "oneapi"; then
+        config="$config
+    upstream oneapi_upstream {
+        server ${CONTAINER_PREFIX}_oneapi:3000;
+    }"
+    fi
+    
+    if check_service_running "ragflow"; then
+        config="$config
+    upstream ragflow_upstream {
+        server ${CONTAINER_PREFIX}_ragflow:80;
+    }
+    
+    upstream ragflow_api_upstream {
+        server ${CONTAINER_PREFIX}_ragflow:9380;
+    }"
+    fi
+    
+    echo "$config"
+}
+
+# 生成安全的域名模式的Nginx配置
+generate_safe_domain_nginx_config() {
+    log "生成安全的Nginx配置..."
+    
+    # 检查哪些服务正在运行
+    local running_services=()
+    for service in "dify_api" "dify_web" "n8n" "oneapi" "ragflow"; do
+        if check_service_running "$service"; then
+            running_services+=("$service")
+            log "检测到运行中的服务: $service"
+        else
+            log "服务未运行，将跳过: $service"
+        fi
+    done
+    
+    # 生成配置文件
+    cat > "$INSTALL_PATH/config/nginx.conf" << EOF
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    log_format main '\$remote_addr - \$remote_user [\$time_local] "\$request" '
+                   '\$status \$body_bytes_sent "\$http_referer" '
+                   '"\$http_user_agent" "\$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;
+    error_log /var/log/nginx/error.log;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    client_max_body_size 100M;
+EOF
+
+    # 添加动态upstream配置
+    for service in "${running_services[@]}"; do
+        case "$service" in
+            "dify_api")
+                cat >> "$INSTALL_PATH/config/nginx.conf" << EOF
+
+    # Dify API upstream
+    upstream dify_api_upstream {
+        server ${CONTAINER_PREFIX}_dify_api:5001;
+    }
+EOF
+                ;;
+            "dify_web")
+                cat >> "$INSTALL_PATH/config/nginx.conf" << EOF
+
+    # Dify Web upstream
+    upstream dify_web_upstream {
+        server ${CONTAINER_PREFIX}_dify_web:3000;
+    }
+EOF
+                ;;
+            "n8n")
+                cat >> "$INSTALL_PATH/config/nginx.conf" << EOF
+
+    # n8n upstream
+    upstream n8n_upstream {
+        server ${CONTAINER_PREFIX}_n8n:5678;
+    }
+EOF
+                ;;
+            "oneapi")
+                cat >> "$INSTALL_PATH/config/nginx.conf" << EOF
+
+    # OneAPI upstream
+    upstream oneapi_upstream {
+        server ${CONTAINER_PREFIX}_oneapi:3000;
+    }
+EOF
+                ;;
+            "ragflow")
+                cat >> "$INSTALL_PATH/config/nginx.conf" << EOF
+
+    # RAGFlow upstream
+    upstream ragflow_upstream {
+        server ${CONTAINER_PREFIX}_ragflow:80;
+    }
+    
+    upstream ragflow_api_upstream {
+        server ${CONTAINER_PREFIX}_ragflow:9380;
+    }
+EOF
+                ;;
+        esac
+    done
+    
+    # 添加服务器配置
+    generate_server_configs "${running_services[@]}"
+    
+    # 结束配置文件
+    echo "}" >> "$INSTALL_PATH/config/nginx.conf"
+    
+    success "安全的Nginx配置生成完成"
+}
+
+# 生成服务器配置
+generate_server_configs() {
+    local running_services=("$@")
+    
+    # Dify服务器配置
+    if [[ " ${running_services[*]} " =~ " dify_api " ]] && [[ " ${running_services[*]} " =~ " dify_web " ]]; then
+        cat >> "$INSTALL_PATH/config/nginx.conf" << 'EOF'
+
+    # Dify服务器配置
+    server {
+        listen 80;
+        server_name ${DIFY_DOMAIN};
+
+        # API路径代理
+        location /console/api/ {
+            proxy_pass http://dify_api_upstream/console/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /api/ {
+            proxy_pass http://dify_api_upstream/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /v1/ {
+            proxy_pass http://dify_api_upstream/v1/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # 默认路径代理到Web服务
+        location / {
+            proxy_pass http://dify_web_upstream/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+EOF
+    fi
+    
+    # n8n服务器配置
+    if [[ " ${running_services[*]} " =~ " n8n " ]]; then
+        cat >> "$INSTALL_PATH/config/nginx.conf" << 'EOF'
+
+    # n8n服务器配置
+    server {
+        listen 80;
+        server_name ${N8N_DOMAIN};
+
+        location / {
+            proxy_pass http://n8n_upstream/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # WebSocket支持
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+    }
+EOF
+    fi
+    
+    # OneAPI服务器配置
+    if [[ " ${running_services[*]} " =~ " oneapi " ]]; then
+        cat >> "$INSTALL_PATH/config/nginx.conf" << 'EOF'
+
+    # OneAPI服务器配置
+    server {
+        listen 80;
+        server_name ${ONEAPI_DOMAIN};
+
+        location / {
+            proxy_pass http://oneapi_upstream/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+EOF
+    fi
+    
+    # RAGFlow服务器配置
+    if [[ " ${running_services[*]} " =~ " ragflow " ]]; then
+        cat >> "$INSTALL_PATH/config/nginx.conf" << 'EOF'
+
+    # RAGFlow服务器配置
+    server {
+        listen 80;
+        server_name ${RAGFLOW_DOMAIN};
+
+        # API路径代理
+        location /api/ {
+            proxy_pass http://ragflow_api_upstream/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # 默认路径代理到Web服务
+        location / {
+            proxy_pass http://ragflow_upstream/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+EOF
+    fi
+}
+
 # 生成域名模式的Nginx配置
 generate_domain_nginx_config() {
+    # 使用安全的配置生成函数
+    generate_safe_domain_nginx_config
+    return $?
+}
+
+# 保留原有的函数作为备用
+generate_domain_nginx_config_original() {
     # 定义服务名变量，使用容器前缀
     local dify_api="${CONTAINER_PREFIX}_dify_api"
     local dify_web="${CONTAINER_PREFIX}_dify_web"
