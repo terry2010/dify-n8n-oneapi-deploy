@@ -100,10 +100,11 @@ services:
     volumes:
       - ./volumes/ragflow/minio:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 30s
-      timeout: 10s
-      retries: 5
+      timeout: 20s
+      retries: 10
+      start_period: 60s
     networks:
       - aiserver_network
 
@@ -241,7 +242,7 @@ start_ragflow_services() {
         else
             warning "RAGFlow容器启动失败"
             # 显示docker-compose日志
-            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml logs ragflow --tail 10
+            COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-ragflow.yml logs --tail 10 ragflow 2>/dev/null || true
         fi
         
         retry_count=$((retry_count + 1))

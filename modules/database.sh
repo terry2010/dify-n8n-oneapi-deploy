@@ -133,11 +133,52 @@ EOF
     success "数据库配置生成完成"
 }
 
+# 检查并修复MySQL数据损坏
+check_and_fix_mysql_corruption() {
+    local mysql_data_dir="$INSTALL_PATH/volumes/mysql/data"
+    
+    if [ -d "$mysql_data_dir" ]; then
+        log "检查MySQL数据目录..."
+        
+        # 检查是否存在损坏标记文件
+        if [ -f "$mysql_data_dir/ib_logfile0" ] || [ -f "$mysql_data_dir/ib_logfile1" ]; then
+            log "检测到旧的InnoDB日志文件，可能导致启动失败"
+            
+            # 备份旧数据
+            local backup_dir="$INSTALL_PATH/mysql_corruption_backup_$(date +%Y%m%d_%H%M%S)"
+            log "备份MySQL数据到: $backup_dir"
+            cp -r "$mysql_data_dir" "$backup_dir" 2>/dev/null || true
+            
+            # 删除损坏的日志文件
+            log "清理损坏的InnoDB日志文件..."
+            rm -f "$mysql_data_dir/ib_logfile"* 2>/dev/null || true
+            rm -f "$mysql_data_dir/ibdata1" 2>/dev/null || true
+            
+            # 如果数据目录严重损坏，完全重置
+            if [ -f "$mysql_data_dir/mysql.sock" ]; then
+                rm -f "$mysql_data_dir/mysql.sock" 2>/dev/null || true
+            fi
+            
+            warning "MySQL数据目录已清理，将重新初始化"
+        fi
+        
+        # 检查目录权限
+        if [ "$(stat -c %U "$mysql_data_dir" 2>/dev/null)" != "999" ]; then
+            log "修复MySQL数据目录权限..."
+            chown -R 999:999 "$mysql_data_dir" 2>/dev/null || true
+            chmod -R 755 "$mysql_data_dir" 2>/dev/null || true
+        fi
+    fi
+}
+
 # 启动数据库服务
 start_database_services() {
     log "启动数据库服务..."
 
     cd "$INSTALL_PATH"
+
+    # 检查并修复MySQL数据损坏
+    check_and_fix_mysql_corruption
 
     # 确保数据目录权限正确
     setup_database_permissions_pre

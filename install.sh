@@ -144,11 +144,12 @@ start_all_services() {
     # 分步启动服务
     log "启动基础服务..."
     if [ -f "docker-compose-db.yml" ]; then
-        docker-compose -f docker-compose-db.yml up -d
+        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-db.yml up -d --remove-orphans
         sleep 45
 
-        # 等待数据库服务完全启动
-        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 60
+        # 等待数据库服务完全启动（增加超时时间）
+        log "MySQL服务可能需要更长时间初始化，设置超时时间为180秒"
+        wait_for_service "mysql" "mysqladmin ping -h localhost -u root -p${DB_PASSWORD} --silent" 180
         wait_for_service "postgres" "pg_isready -U postgres" 60
         wait_for_service "redis" "redis-cli ping" 30
 
@@ -161,25 +162,25 @@ start_all_services() {
 
     # 启动OneAPI
     if [ -f "docker-compose-oneapi.yml" ]; then
-        docker-compose -f docker-compose-oneapi.yml up -d
+        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-oneapi.yml up -d --remove-orphans
         sleep 15
     fi
 
     # 启动Dify服务
     if [ -f "docker-compose-dify.yml" ]; then
-        docker-compose -f docker-compose-dify.yml up -d dify_sandbox
+        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_sandbox
         wait_for_service "dify_sandbox" "curl -f http://localhost:8194/health" 60
 
-        docker-compose -f docker-compose-dify.yml up -d dify_api dify_worker
+        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_api dify_worker
         wait_for_service "dify_api" "curl -f http://localhost:5001/health" 60
 
-        docker-compose -f docker-compose-dify.yml up -d dify_web
+        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-dify.yml up -d --remove-orphans dify_web
         sleep 15
     fi
 
     # 启动n8n
     if [ -f "docker-compose-n8n.yml" ]; then
-        docker-compose -f docker-compose-n8n.yml up -d
+        COMPOSE_PROJECT_NAME=aiserver docker-compose -f docker-compose-n8n.yml up -d --remove-orphans
         wait_for_service "n8n" "wget --quiet --tries=1 --spider http://localhost:5678/healthz" 60
     fi
 
