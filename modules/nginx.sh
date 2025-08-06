@@ -715,6 +715,9 @@ EOF
     # 生成域名服务器配置
     generate_server_configs
     
+    # 添加HTTP块的闭合大括号
+    echo "}" >> "$INSTALL_PATH/config/nginx.conf"
+    
     success "双模式Nginx配置生成完成"
 }
 
